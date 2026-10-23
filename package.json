@@ -1,19 +1,23 @@
 {
-  "name": "atelier-taches",
+  "name": "atelier-sci",
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "Un espace calme pour faire avancer vos idées.",
+  "description": "Suivi de trésorerie et gestion immobilière pour une SCI à l’IS",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test tests/model.test.js",
-    "test:e2e": "playwright test"
+    "test": "node --test tests/model.test.js tests/server.test.js",
+    "test:e2e": "playwright test",
+    "start": "node server/index.js"
   },
   "dependencies": {
     "@fontsource/dm-sans": "5.2.8",
-    "@fontsource/manrope": "5.2.8"
+    "@fontsource/manrope": "5.2.8",
+    "express": "5.3.0",
+    "express-rate-limit": "8.7.1",
+    "helmet": "8.3.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.14.0",
@@ -21,6 +25,6 @@
     "vite": "8.3.5"
   },
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=24.0.0"
   }
 }

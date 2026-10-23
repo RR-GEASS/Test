@@ -1,0 +1,249 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { once } from "node:events";
+import { createApp } from "../server/app.js";
+const password = "a-long-test-password-2026";
+async function harness(dbPath = ":memory:", production = false) {
+  const { app, close } = createApp({ dbPath, production });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const base = `http://127.0.0.1:${server.address().port}`;
+  return {
+    base,
+    async request(
+      path,
+      { body, method = body ? "POST" : "GET", cookie = "", origin = base } = {},
+    ) {
+      const response = await fetch(base + path, {
+        method,
+        headers: {
+          ...(body ? { "Content-Type": "application/json" } : {}),
+          ...(cookie ? { cookie } : {}),
+          Origin: origin,
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      return {
+        status: response.status,
+        cookie: response.headers.get("set-cookie")?.split(";")[0],
+        cookieHeader: response.headers.get("set-cookie"),
+        data: await response.json(),
+        headers: response.headers,
+      };
+    },
+    async close() {
+      await new Promise((resolve) => server.close(resolve));
+      close();
+    },
+  };
+}
+async function register(h, email = "owner@example.test") {
+  return h.request("/api/register", {
+    body: { email, password, name: "SCI Test IS" },
+  });
+}
+test("compte, mot de passe haché, cookie protégé et connexion", async () => {
+  const h = await harness();
+  try {
+    const result = await register(h);
+    assert.equal(result.status, 201);
+    assert.match(result.cookieHeader, /HttpOnly/i);
+    assert.match(result.cookieHeader, /SameSite=Lax/i);
+    assert.equal(result.data.state.mode, "real");
+    assert.equal(result.data.state.settings.taxRegime, "IS");
+    assert.equal(result.data.state.transactions.length, 0);
+    assert.equal("password_hash" in result.data.user, false);
+    const bad = await h.request("/api/login", {
+      body: { email: "owner@example.test", password: "wrong" },
+    });
+    assert.equal(bad.status, 401);
+    const ok = await h.request("/api/login", {
+      body: { email: "owner@example.test", password },
+    });
+    assert.equal(ok.status, 200);
+    assert.equal(
+      (await h.request("/api/session", { cookie: ok.cookie })).status,
+      200,
+    );
+  } finally {
+    await h.close();
+  }
+});
+test("les données de deux comptes restent séparées et un accès anonyme est refusé", async () => {
+  const h = await harness();
+  try {
+    assert.equal((await h.request("/api/session")).status, 401);
+    const a = await register(h, "a@example.test");
+    const b = await register(h, "b@example.test");
+    a.data.state.settings.name = "SCI privée A";
+    assert.equal(
+      (
+        await h.request("/api/state", {
+          method: "PUT",
+          cookie: a.cookie,
+          body: { state: a.data.state, revision: 0, accountId: a.data.user.id },
+        })
+      ).status,
+      200,
+    );
+    const other = await h.request("/api/session", { cookie: b.cookie });
+    assert.equal(other.data.state.settings.name, "SCI Test IS");
+    assert.equal(
+      (
+        await h.request("/api/state", {
+          method: "PUT",
+          body: { state: a.data.state, revision: 0, accountId: a.data.user.id },
+        })
+      ).status,
+      401,
+    );
+  } finally {
+    await h.close();
+  }
+});
+test("les écritures d’un autre site sont bloquées et une version périmée ne remplace rien", async () => {
+  const h = await harness();
+  try {
+    const a = await register(h);
+    const body = {
+      state: a.data.state,
+      revision: 0,
+      accountId: a.data.user.id,
+    };
+    assert.equal(
+      (
+        await h.request("/api/state", {
+          method: "PUT",
+          body,
+          cookie: a.cookie,
+          origin: "https://other.test",
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (await h.request("/api/state", { method: "PUT", body, cookie: a.cookie }))
+        .status,
+      200,
+    );
+    const conflict = await h.request("/api/state", {
+      method: "PUT",
+      body,
+      cookie: a.cookie,
+    });
+    assert.equal(conflict.status, 409);
+    assert.equal(conflict.data.code, "conflict");
+    assert.equal(
+      (await h.request("/api/session", { cookie: a.cookie })).data.revision,
+      1,
+    );
+  } finally {
+    await h.close();
+  }
+});
+test("les sauvegardes financières invalides et les doublons de comptes sont refusés", async () => {
+  const h = await harness();
+  try {
+    const a = await register(h);
+    const bad = structuredClone(a.data.state);
+    bad.settings.openingBalanceCents = 0.123;
+    assert.equal(
+      (
+        await h.request("/api/state", {
+          method: "PUT",
+          cookie: a.cookie,
+          body: { state: bad, revision: 0, accountId: a.data.user.id },
+        })
+      ).status,
+      400,
+    );
+    assert.equal((await register(h)).status, 409);
+    assert.equal(
+      (
+        await h.request("/api/register", {
+          body: { email: "x@example.test", password: "short", name: "SCI" },
+        })
+      ).status,
+      400,
+    );
+  } finally {
+    await h.close();
+  }
+});
+test("la déconnexion invalide le cookie côté serveur", async () => {
+  const h = await harness();
+  try {
+    const a = await register(h);
+    assert.equal(
+      (await h.request("/api/logout", { cookie: a.cookie, body: {} })).status,
+      200,
+    );
+    assert.equal(
+      (await h.request("/api/session", { cookie: a.cookie })).status,
+      401,
+    );
+  } finally {
+    await h.close();
+  }
+});
+test("les données et les sessions sont conservées après redémarrage SQLite", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "atelier-sci-"));
+  let h;
+  try {
+    h = await harness(join(dir, "test.sqlite"));
+    const a = await register(h);
+    a.data.state.settings.name = "SCI persistante";
+    await h.request("/api/state", {
+      cookie: a.cookie,
+      method: "PUT",
+      body: { state: a.data.state, revision: 0, accountId: a.data.user.id },
+    });
+    await h.close();
+    h = await harness(join(dir, "test.sqlite"));
+    const r = await h.request("/api/session", { cookie: a.cookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.state.settings.name, "SCI persistante");
+    assert.equal(r.data.revision, 1);
+  } finally {
+    if (h) await h.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+test("les cookies de production imposent HTTPS et les API ne sont pas mises en cache", async () => {
+  const h = await harness(":memory:", true);
+  try {
+    const a = await register(h);
+    assert.match(a.cookieHeader, /Secure/i);
+    assert.equal(a.headers.get("cache-control"), "no-store");
+    assert.ok(
+      a.headers
+        .get("content-security-policy")
+        .includes("frame-ancestors 'none'"),
+    );
+  } finally {
+    await h.close();
+  }
+});
+test("un ancien onglet ne peut pas enregistrer sa SCI dans un compte différent", async () => {
+  const h = await harness();
+  try {
+    const a = await register(h, "first@example.test");
+    const b = await register(h, "second@example.test");
+    const result = await h.request("/api/state", {
+      method: "PUT",
+      cookie: b.cookie,
+      body: { state: a.data.state, revision: 0, accountId: a.data.user.id },
+    });
+    assert.equal(result.status, 409);
+    assert.equal(result.data.code, "account_changed");
+    assert.equal(
+      (await h.request("/api/session", { cookie: b.cookie })).data.revision,
+      0,
+    );
+  } finally {
+    await h.close();
+  }
+});

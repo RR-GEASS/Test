@@ -1,89 +1,295 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { createInitialState, normalizeState, validateTask, filterTasks, getStats, isOverdue, nextStatus, formatDate } from '../src/model.js';
-
-test('le modèle de démonstration contient des tâches valides dans chaque colonne', () => {
-  const state = createInitialState();
-  assert.equal(state.version, 1);
-  assert.equal(state.tasks.length, 9);
-  assert.equal(new Set(state.tasks.map((task) => task.id)).size, 9);
-  assert.deepEqual([...new Set(state.tasks.map((task) => task.status))].sort(), ['doing', 'done', 'todo']);
-  for (const task of state.tasks) assert.deepEqual(validateTask(task).errors, {});
-  assert.deepEqual(normalizeState(JSON.stringify(state)), state);
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  parseMoney,
+  validDate,
+  createEmptyState,
+  createDemoState,
+  validateTransaction,
+  validateProperty,
+  validateSettings,
+  getSummary,
+  filterTransactions,
+  parseBackup,
+  serializeBackup,
+  exportCSV,
+} from "../src/model.js";
+const property = {
+  id: "p1",
+  name: "Appartement Érable",
+  address: "Lyon",
+  tenant: "Locataire",
+  rentCents: 80000,
+  chargesCents: 5000,
+  archived: false,
+};
+function fixture() {
+  const s = createEmptyState();
+  s.settings = {
+    name: "SCI Test",
+    taxRegime: "IS",
+    openingDate: "2026-01-01",
+    openingBalanceCents: 100000,
+  };
+  s.properties = [{ ...property }];
+  return s;
+}
+function tx(overrides = {}) {
+  return {
+    id: "t1",
+    date: "2026-03-01",
+    type: "income",
+    status: "paid",
+    label: "Loyer",
+    category: "rent",
+    propertyId: "p1",
+    amountCents: 10010,
+    counterparty: "",
+    reference: "",
+    notes: "",
+    ...overrides,
+  };
+}
+test("les montants sont convertis en centimes sans cumul d’arrondis", () => {
+  assert.equal(parseMoney("1 234,56"), 123456);
+  assert.equal(parseMoney("0.10") + parseMoney("0,20"), 30);
+  assert.equal(parseMoney("-123,45", true), -12345);
+  for (const value of [
+    "1,234",
+    "1.005",
+    "1e3",
+    "NaN",
+    "Infinity",
+    "-12",
+    "",
+    {},
+    "1.234,56",
+  ])
+    assert.equal(parseMoney(value), null);
 });
-
-test('la restauration conserve un tableau vide et récupère les données corrompues', () => {
-  assert.deepEqual(normalizeState({ version: 1, tasks: [] }), { version: 1, tasks: [] });
-  for (const input of [null, undefined, '{', 'null', {}, { tasks: null }]) {
-    assert.equal(normalizeState(input).tasks.length, 9);
-  }
+test("les dates impossibles sont rejetées", () => {
+  assert.equal(validDate("2026-02-29"), false);
+  assert.equal(validDate("2024-02-29"), true);
+  assert.equal(validDate("2026-13-01"), false);
 });
-
-test('la restauration élimine les entrées invalides et répare les champs sans perdre les titres', () => {
-  const state = normalizeState({ tasks: [null, 4, {}, { title: '  Bonjour  ', id: 'duplicate', status: 'nonsense', project: 'other', priority: 'oops', dueDate: '2026-02-30' }, { title: 'Deuxième', id: 'duplicate' }] });
-  assert.equal(state.tasks.length, 2);
-  assert.equal(state.tasks[0].title, 'Bonjour');
-  assert.equal(state.tasks[0].status, 'todo');
-  assert.equal(state.tasks[0].project, 'website');
-  assert.equal(state.tasks[0].priority, 'medium');
-  assert.equal(state.tasks[0].dueDate, '');
-  assert.notEqual(state.tasks[0].id, state.tasks[1].id);
-  for (const task of state.tasks) assert.deepEqual(validateTask(task).errors, {});
+test("la SCI commence à l’IS sans opérations ni biens fictifs", () => {
+  const s = createEmptyState();
+  assert.equal(s.settings.taxRegime, "IS");
+  assert.deepEqual(s.transactions, []);
+  assert.deepEqual(s.properties, []);
+  assert.equal(s.mode, "real");
 });
-
-test('la validation nettoie le texte et refuse les titres vides ou trop longs', () => {
-  const { value, errors } = validateTask({ title: '  Mon projet  ', description: '  Une idée.  ' });
-  assert.deepEqual(errors, {});
-  assert.equal(value.title, 'Mon projet');
-  assert.equal(value.description, 'Une idée.');
-  assert.ok(validateTask({ title: '  ' }).errors.title);
-  assert.ok(validateTask({ title: 'a'.repeat(121) }).errors.title);
-  assert.ok(validateTask({ title: 'Projet', description: 'a'.repeat(3001) }).errors.description);
-  assert.ok(validateTask(null).errors.title);
+test("la démonstration est clairement isolée et peut être restaurée sans perte", () => {
+  const s = createDemoState();
+  assert.equal(s.mode, "demo");
+  const restored = parseBackup(serializeBackup(s));
+  assert.deepEqual(restored, s);
+  assert.ok(s.transactions.length > 0);
 });
-
-test('la validation refuse les dates impossibles et accepte les années bissextiles', () => {
-  for (const dueDate of ['2026-02-29', '2026-02-30', '2026-13-01', '2026-00-01', '2026-01-00', 'not-a-date']) {
-    assert.ok(validateTask({ title: 'Projet', dueDate }).errors.dueDate, dueDate);
-  }
-  assert.deepEqual(validateTask({ title: 'Projet', dueDate: '2028-02-29' }).errors, {});
+test("une opération refuse les montants négatifs et les catégories incohérentes", () => {
+  const s = fixture();
+  let r = validateTransaction(
+    {
+      date: "2026-03-01",
+      label: "Test",
+      amount: "-20",
+      type: "income",
+      category: "maintenance",
+      status: "paid",
+      propertyId: "absent",
+    },
+    s,
+  );
+  assert.ok(r.errors.amount);
+  assert.ok(r.errors.category);
+  assert.ok(r.errors.propertyId);
+  r = validateTransaction(
+    {
+      date: "2026-03-01",
+      label: " Loyer ",
+      amount: "800,50",
+      type: "income",
+      category: "rent",
+      status: "paid",
+      propertyId: "p1",
+    },
+    s,
+  );
+  assert.deepEqual(r.errors, {});
+  assert.equal(r.value.amountCents, 80050);
+  assert.equal(r.value.label, "Loyer");
 });
-
-test('la recherche ignore accents et casse et combine les filtres', () => {
-  const tasks = [
-    { title: 'Créer le prototype', description: 'Étudier les retours', project: 'website', priority: 'high' },
-    { title: 'Écrire', description: '', project: 'ideas', priority: 'low' },
+test("les fiches des biens et le solde initial sont contrôlés", () => {
+  assert.ok(validateProperty({ name: "", rent: "abc" }).errors.name);
+  assert.ok(validateProperty({ name: "Bien", rent: "-2" }).errors.rent);
+  const r = validateSettings({
+    name: "SCI",
+    taxRegime: "IS",
+    openingDate: "2026-01-01",
+    openingBalance: "-500,50",
+  });
+  assert.deepEqual(r.errors, {});
+  assert.equal(r.value.openingBalanceCents, -50050);
+});
+test("les attentes et les mouvements futurs ne gonflent pas les encaissements", () => {
+  const s = fixture();
+  s.transactions = [
+    tx(),
+    tx({ id: "t2", status: "pending", amountCents: 30000 }),
+    tx({ id: "t3", date: "2026-11-01", amountCents: 40000 }),
   ];
-  assert.deepEqual(filterTasks(tasks, { query: 'CREER' }), [tasks[0]]);
-  assert.deepEqual(filterTasks(tasks, { query: 'etudier' }), [tasks[0]]);
-  assert.deepEqual(filterTasks(tasks, { query: 'boite a idees' }), [tasks[1]]);
-  assert.deepEqual(filterTasks(tasks, { query: 'creer', project: 'website', priority: 'high' }), [tasks[0]]);
-  assert.deepEqual(filterTasks(tasks, { query: 'creer', project: 'ideas' }), []);
-  assert.deepEqual(filterTasks(tasks, { priority: 'low' }), [tasks[1]]);
-  assert.equal(tasks.length, 2);
+  const r = getSummary(s, { year: 2026, today: "2026-10-23" });
+  assert.equal(r.income, 10010);
+  assert.equal(r.rent, 10010);
+  assert.equal(r.pendingIncome, 30000);
+  assert.equal(r.balance, 110010);
+  assert.equal(r.overdue.length, 1);
 });
-
-test('les statistiques distinguent retard, échéance du jour et tâches terminées', () => {
-  const today = '2026-10-23';
-  const tasks = [
-    { status: 'todo', dueDate: '2026-10-22' },
-    { status: 'doing', dueDate: today },
-    { status: 'done', dueDate: '2026-10-01' },
-    { status: 'todo', dueDate: '' },
+test("capital, intérêts et apports affectent la trésorerie sans être des loyers", () => {
+  const s = fixture();
+  s.transactions = [
+    tx({ amountCents: 80000 }),
+    tx({
+      id: "t2",
+      type: "expense",
+      category: "loan_capital",
+      amountCents: 40000,
+    }),
+    tx({
+      id: "t3",
+      type: "expense",
+      category: "loan_interest",
+      amountCents: 10000,
+    }),
+    tx({ id: "t4", category: "contribution", amountCents: 50000 }),
   ];
-  assert.deepEqual(getStats(tasks, today), { total: 4, done: 1, doing: 1, todo: 2, overdue: 1, progress: 25 });
-  assert.equal(isOverdue(tasks[0], today), true);
-  assert.equal(isOverdue(tasks[1], today), false);
-  assert.equal(isOverdue(tasks[2], today), false);
-  assert.equal(isOverdue({ status: 'todo', dueDate: 'invalid' }, today), false);
-  assert.deepEqual(getStats([], today), { total: 0, done: 0, doing: 0, todo: 0, overdue: 0, progress: 0 });
+  const r = getSummary(s, { year: 2026, today: "2026-10-23" });
+  assert.equal(r.rent, 80000);
+  assert.equal(r.expense, 50000);
+  assert.equal(r.income, 130000);
+  assert.equal(r.balance, 180000);
 });
-
-test('le déplacement et les dates ont des résultats utilisables', () => {
-  assert.equal(nextStatus('todo'), 'doing');
-  assert.equal(nextStatus('doing'), 'done');
-  assert.equal(nextStatus('done'), 'todo');
-  assert.equal(nextStatus('unknown'), 'todo');
-  assert.match(formatDate('2026-10-24'), /24 oct/);
-  assert.equal(formatDate('2026-02-30'), '');
+test("le solde respecte sa date initiale et le cumul des années antérieures", () => {
+  const s = fixture();
+  s.settings.openingDate = "2025-01-01";
+  s.transactions = [
+    tx({ id: "old", date: "2024-12-01", amountCents: 90000 }),
+    tx({ id: "prev", date: "2025-12-01", amountCents: 20000 }),
+    tx({ amountCents: 30000 }),
+  ];
+  const r = getSummary(s, { year: 2026, today: "2026-10-23" });
+  assert.equal(r.income, 30000);
+  assert.equal(r.balance, 150000);
+  assert.equal(
+    getSummary(s, { year: 2024, today: "2026-10-23" }).balance,
+    null,
+  );
+});
+test("le filtre par bien affiche un solde des mouvements sans répartir le solde bancaire", () => {
+  const s = fixture();
+  s.transactions = [
+    tx({ amountCents: 25000 }),
+    tx({
+      id: "general",
+      propertyId: "",
+      category: "contribution",
+      amountCents: 500000,
+    }),
+  ];
+  const r = getSummary(s, {
+    year: 2026,
+    propertyId: "p1",
+    today: "2026-10-23",
+  });
+  assert.equal(r.balance, 25000);
+  assert.equal(r.income, 25000);
+});
+test("le graphique réconcilie exactement les sommes annuelles", () => {
+  const s = fixture();
+  s.transactions = [
+    tx(),
+    tx({
+      id: "t2",
+      date: "2026-04-01",
+      type: "expense",
+      category: "insurance",
+      amountCents: 999,
+    }),
+  ];
+  const r = getSummary(s, { year: 2026, today: "2026-12-31" });
+  assert.equal(
+    r.monthly.reduce((n, m) => n + m.income, 0),
+    r.income,
+  );
+  assert.equal(
+    r.monthly.reduce((n, m) => n + m.expense, 0),
+    r.expense,
+  );
+});
+test("recherche sans accents et filtres se combinent", () => {
+  const s = fixture();
+  s.transactions = [
+    tx({
+      label: "Réparation chaudière",
+      type: "expense",
+      category: "maintenance",
+    }),
+    tx({ id: "t2", propertyId: "", label: "Autre" }),
+  ];
+  assert.equal(
+    filterTransactions(s, {
+      year: 2026,
+      propertyId: "p1",
+      query: "reparation chaudiere",
+      category: "maintenance",
+    }).length,
+    1,
+  );
+  assert.equal(filterTransactions(s, { status: "pending" }).length, 0);
+});
+test("l’import refuse les doublons, montants invalides et références absentes", () => {
+  for (const mutate of [
+    (s) => s.transactions.push({ ...s.transactions[0] }),
+    (s) => (s.transactions[0].amountCents = 1.005),
+    (s) => (s.transactions[0].propertyId = "absent"),
+    (s) => (s.settings.openingBalanceCents = NaN),
+    (s) => (s.transactions[0].date = "2026-02-31"),
+  ]) {
+    const s = fixture();
+    s.transactions = [tx()];
+    mutate(s);
+    assert.throws(() => parseBackup(s));
+  }
+  assert.throws(() => parseBackup("{oops"));
+  assert.throws(() => parseBackup({ tasks: [] }));
+});
+test("le CSV garde le statut et protège les cellules texte contre les formules Excel", () => {
+  const s = fixture();
+  s.transactions = [
+    tx({
+      label: '=HYPERLINK("https://example.test")',
+      status: "pending",
+      amountCents: 10010,
+      notes: "ligne1\nligne2",
+    }),
+  ];
+  const csv = exportCSV(s, s.transactions);
+  assert.ok(csv.startsWith("\ufeff"));
+  assert.ok(csv.includes("'="));
+  assert.ok(csv.includes("En attente"));
+  assert.ok(csv.includes("100,10"));
+  assert.ok(csv.includes("ligne1\nligne2"));
+});
+test("une échéance de décembre payée en janvier est comptée au règlement et conserve son échéance", () => {
+  const s = fixture();
+  s.transactions = [
+    tx({ date: "2026-01-02", dueDate: "2025-12-05", amountCents: 80000 }),
+  ];
+  assert.equal(getSummary(s, { year: 2025, today: "2026-10-23" }).rent, 0);
+  assert.equal(getSummary(s, { year: 2026, today: "2026-10-23" }).rent, 80000);
+  assert.equal(
+    parseBackup(serializeBackup(s)).transactions[0].dueDate,
+    "2025-12-05",
+  );
+  assert.ok(exportCSV(s, s.transactions).includes("2025-12-05"));
 });

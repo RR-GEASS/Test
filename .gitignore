@@ -6,3 +6,9 @@ playwright-report/
 .artifacts/
 *.log
 .DS_Store
+
+data/
+*.sqlite*
+.env
+.env.*
+!.env.example
