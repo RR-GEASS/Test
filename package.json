@@ -1,0 +1,26 @@
+{
+  "name": "atelier-taches",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Un espace calme pour faire avancer vos idées.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test tests/model.test.js",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@fontsource/dm-sans": "5.2.8",
+    "@fontsource/manrope": "5.2.8"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@playwright/test": "1.64.1",
+    "vite": "8.3.5"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
