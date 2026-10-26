@@ -357,6 +357,11 @@ test("le ZIP classe les justificatifs par bien et direction, sans JSON ni README
     assert.equal(rent["Total réglé historique EUR"], "850,00");
     assert.equal(rent["Notes"], "Conserver toute cette note");
     assert.equal(rent["Justificatifs inclus"], docs[0][0]);
+    assert.equal(rent["Nombre de justificatifs enregistrés"], "1");
+    assert.equal(rent["Justificatif manquant"], "Non");
+    const insurance = operations.find((t) => t["ID opération"] === "insurance-1");
+    assert.equal(insurance["Nombre de justificatifs enregistrés"], "0");
+    assert.equal(insurance["Justificatif manquant"], "Oui");
     assert.equal(
       operations.some((t) => t["ID opération"] === "outside-1"),
       false,
@@ -394,6 +399,8 @@ test("les critères précis peuvent exclure tous les fichiers et conserver uniqu
     assert.equal(operations.length, 1);
     assert.equal(operations[0]["ID opération"], "rent-1");
     assert.equal(operations[0]["Justificatifs inclus"], "");
+    assert.equal(operations[0]["Nombre de justificatifs enregistrés"], "1");
+    assert.equal(operations[0]["Justificatif manquant"], "Non");
     const payments = csvRows(files.get("reglements.csv"));
     assert.equal(payments.length, 2);
     assert.equal(
@@ -723,6 +730,59 @@ test("les noms de biens dangereux ou confondus sont désambiguïsés de façon s
       selected.has(expected),
       "property folder remains stable after filtering out colliding properties",
     );
+  } finally {
+    await h.close();
+  }
+});
+
+test("la ventilation attendue d’un prêt partiellement réglé et ses renseignements sont exportés sans inventer de règlement", async () => {
+  const h = await harness();
+  try {
+    const owner = await account(h);
+    await populate(h, owner);
+    owner.state.transactions.push({
+      ...owner.state.transactions[1],
+      id: "loan-1",
+      category: "loan_payment",
+      amountCents: 100000,
+      capitalCents: 75000,
+      interestCents: 22000,
+      insuranceCents: 3000,
+      counterparty: "Banque du bien",
+      reference: "PRET-2026-01",
+      notes: "Vérifier le tableau d’amortissement",
+      payments: [{ id: "loan-partial", date: "2026-01-20", amountCents: 40000, rentCents: 0, chargesCents: 0 }],
+    });
+    await save(h, owner);
+    await upload(h, owner, "loan-1", "tableau-banque.pdf");
+    const r = await h.request("/api/exports/accountant", {
+      cookie: owner.cookie,
+      body: { ...dates, operationIds: ["loan-1"], includeDocuments: false },
+    });
+    assert.equal(r.status, 200);
+    const files = zipFiles(r.bytes);
+    assertSimpleArchive(files);
+    assert.deepEqual([...files.keys()].sort(), [...csvNames].sort());
+    const operations = csvRows(files.get("operations.csv"));
+    assert.equal(operations.length, 1);
+    const loan = operations[0];
+    assert.equal(loan["Montant attendu EUR"], "1000,00");
+    assert.equal(loan["Capital de prêt attendu EUR"], "750,00");
+    assert.equal(loan["Intérêts de prêt attendus EUR"], "220,00");
+    assert.equal(loan["Assurance emprunteur attendue EUR"], "30,00");
+    assert.equal(loan["Total réglé historique EUR"], "400,00");
+    assert.equal(loan["Reste à régler EUR"], "600,00");
+    assert.equal(loan["Décaissements dans la plage EUR"], "400,00");
+    assert.equal(loan["Tiers"], "Banque du bien");
+    assert.equal(loan["Référence de pièce"], "PRET-2026-01");
+    assert.equal(loan["Notes"], "Vérifier le tableau d’amortissement");
+    assert.equal(loan["Nombre de justificatifs enregistrés"], "1");
+    assert.equal(loan["Justificatif manquant"], "Non");
+    assert.equal(loan["Justificatifs inclus"], "");
+    const payments = csvRows(files.get("reglements.csv"));
+    assert.equal(payments.length, 1);
+    assert.equal(payments[0]["ID règlement"], "loan-partial");
+    assert.equal(payments[0]["Montant réglé EUR"], "400,00");
   } finally {
     await h.close();
   }

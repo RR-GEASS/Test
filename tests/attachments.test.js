@@ -112,6 +112,39 @@ const upload = (h, owner, id, name = "facture.pdf", bytes = PDF, extra = {}) =>
     headers: { "X-File-Name": encodeURIComponent(name), ...extra },
   });
 
+test("le récapitulatif des justificatifs est privé et suit les ajouts, suppressions et opérations présentes", async () => {
+  const h = await harness();
+  try {
+    assert.equal((await h.request("/api/attachments/summary")).status, 401);
+    const owner = await account(h);
+    const other = await account(h, "summary-other@example.test");
+    const t = await operation(h, owner, "shared-id");
+    await operation(h, other, t.id);
+    const summary = async (account) => {
+      const response = await h.request("/api/attachments/summary", { cookie: account.cookie });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      return response.data;
+    };
+    assert.deepEqual(await summary(owner), { counts: {} });
+    const first = await upload(h, owner, t.id);
+    assert.equal(first.status, 201);
+    assert.equal((await upload(h, owner, t.id, "second.pdf")).status, 201);
+    assert.deepEqual(await summary(owner), { counts: { "shared-id": 2 } });
+    assert.deepEqual(await summary(other), { counts: {} });
+    assert.equal((await upload(h, other, t.id)).status, 201);
+    assert.deepEqual(await summary(other), { counts: { "shared-id": 1 } });
+    await h.request(`/api/attachments/${first.data.attachment.id}`, { cookie: owner.cookie, method: "DELETE" });
+    assert.deepEqual(await summary(owner), { counts: { "shared-id": 1 } });
+    owner.state.transactions = [];
+    await save(h, owner);
+    assert.deepEqual(await summary(owner), { counts: {} });
+    assert.deepEqual(await summary(other), { counts: { "shared-id": 1 } });
+  } finally {
+    await h.close();
+  }
+});
+
 test("un justificatif PDF est listé, téléchargé sans exposition inline et supprimé", async () => {
   const h = await harness();
   try {

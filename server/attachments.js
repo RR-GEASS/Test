@@ -194,6 +194,19 @@ export function installAttachments(app, db, requireUser) {
     createdAt: row.created_at,
   });
 
+  app.get("/api/attachments/summary", requireUser, (req, res) => {
+    const record = db.prepare("SELECT state FROM users WHERE id=?").get(req.user.id);
+    const state = JSON.parse(record.state);
+    const transactionIds = new Set(state.transactions.map((t) => t.id));
+    const counts = Object.create(null);
+    const rows = db.prepare(
+      "SELECT transaction_id, count(*) AS count FROM attachments WHERE user_id=? GROUP BY transaction_id",
+    ).all(req.user.id);
+    for (const row of rows)
+      if (transactionIds.has(row.transaction_id)) counts[row.transaction_id] = row.count;
+    res.json({ counts });
+  });
+
   app.get(
     "/api/transactions/:transactionId/attachments",
     requireUser,

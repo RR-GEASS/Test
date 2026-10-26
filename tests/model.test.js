@@ -782,3 +782,136 @@ test("un export annuel sépare les règlements partiels des années voisines et 
     0,
   );
 });
+
+function loanInput(overrides = {}) {
+  return {
+    id: "loan1",
+    date: "2026-03-05",
+    type: "expense",
+    status: "pending",
+    label: "Prêt République",
+    category: "loan_payment",
+    propertyId: "p1",
+    capital: "750,00",
+    interest: "220,00",
+    insurance: "30,00",
+    counterparty: "Banque Test",
+    reference: "PR-2026",
+    notes: "Note pour le comptable",
+    ...overrides,
+  };
+}
+
+test("une échéance de prêt calcule exactement son total et contrôle sa ventilation", () => {
+  const s = fixture();
+  const valid = validateTransaction(loanInput(), s);
+  assert.deepEqual(valid.errors, {});
+  assert.equal(valid.value.amountCents, 100000);
+  assert.equal(valid.value.capitalCents, 75000);
+  assert.equal(valid.value.interestCents, 22000);
+  assert.equal(valid.value.insuranceCents, 3000);
+  for (const overrides of [
+    { amount: "999,99" },
+    { capital: "-1" },
+    { interest: "1,001" },
+    { insurance: "NaN" },
+    { capital: "1000000000", interest: "1", insurance: "0" },
+    { capital: "0", interest: "0", insurance: "0" },
+    { capital: undefined, capitalCents: null },
+    { capital: undefined, capitalCents: "75000" },
+    { capital: undefined, interest: undefined, insurance: undefined, amount: "1000" },
+    { category: "insurance", amount: "1000" },
+  ]) assert.ok(validateTransaction(loanInput(overrides), s).errors.amount);
+  assert.deepEqual(validateTransaction(loanInput({ capital: "1000", interest: "0", insurance: "0" }), s).errors, {});
+});
+
+test("le prêt périodique transmet sa ventilation et les informations du comptable à chaque échéance", () => {
+  const s = fixture();
+  const result = validateRecurrence({
+    ...loanInput(), id: "pr1", frequency: "monthly", startDate: "2026-01-05",
+  }, s);
+  assert.deepEqual(result.errors, {});
+  s.recurrences = [result.value];
+  assert.equal(generateRecurringTransactions(s, "2026-02-28"), 2);
+  for (const t of s.transactions) {
+    assert.equal(t.amountCents, 100000);
+    assert.equal(t.capitalCents, 75000);
+    assert.equal(t.interestCents, 22000);
+    assert.equal(t.insuranceCents, 3000);
+    assert.equal(t.counterparty, "Banque Test");
+    assert.equal(t.reference, "PR-2026");
+    assert.equal(t.notes, "Note pour le comptable");
+  }
+  assert.deepEqual(parseBackup(serializeBackup(s)), s);
+});
+
+test("adapter la ventilation d’une échéance de prêt conserve les autres mois et la règle", () => {
+  const s = fixture();
+  s.recurrences = [validateRecurrence({ ...loanInput(), id: "pr1", frequency: "monthly", startDate: "2026-01-05" }, s).value];
+  generateRecurringTransactions(s, "2026-02-28");
+  const ruleBefore = structuredClone(s.recurrences[0]);
+  const otherMonth = structuredClone(s.transactions[1]);
+  const first = s.transactions[0];
+  const edited = validateTransaction({ ...first, capital: "760", interest: "210", insurance: "30" }, s);
+  assert.deepEqual(edited.errors, {});
+  s.transactions[0] = edited.value;
+  recordPayment(s, first.id, { date: "2026-01-05", amount: "1000" });
+  const paid = s.transactions[0];
+  const corrected = validateTransaction({ ...paid, capital: "765", interest: "205", insurance: "30" }, s);
+  assert.deepEqual(corrected.errors, {});
+  assert.deepEqual(corrected.value.payments, paid.payments);
+  // Old paid operations have a synthetic payment, so their total is locked too.
+  const legacy = validateTransaction(loanInput({ status: "paid" }), fixture()).value;
+  const legacyState = fixture();
+  legacyState.transactions = [legacy];
+  assert.deepEqual(validateTransaction({ ...legacy, capital: "760", interest: "210", insurance: "30" }, legacyState).errors, {});
+  assert.ok(validateTransaction({ ...legacy, capital: "760", interest: "220", insurance: "30" }, legacyState).errors.amount);
+  const changedTotal = validateTransaction({ ...paid, capital: "765", interest: "210", insurance: "30" }, s);
+  assert.ok(changedTotal.errors.amount);
+  assert.deepEqual(s.recurrences[0], ruleBefore);
+  assert.deepEqual(s.transactions[1], otherMonth);
+  s.transactions[0] = corrected.value;
+  assert.deepEqual(parseBackup(serializeBackup(s)), s);
+});
+
+test("les sauvegardes refusent les ventilations de prêt invalides sur les opérations et périodicités", () => {
+  const s = fixture();
+  s.transactions = [validateTransaction(loanInput(), s).value];
+  s.recurrences = [validateRecurrence({ ...loanInput(), id: "pr1", frequency: "monthly", startDate: "2026-01-05" }, s).value];
+  for (const list of ["transactions", "recurrences"]) {
+    for (const value of [null, -1, 1.5, "75000", 99999]) {
+      const invalid = structuredClone(s);
+      invalid[list][0].capitalCents = value;
+      assert.throws(() => parseBackup(serializeBackup(invalid)), /invalide/);
+    }
+  }
+});
+
+test("les informations du comptable des périodicités respectent les limites de saisie", () => {
+  const s = fixture();
+  const input = { ...loanInput(), frequency: "monthly", startDate: "2026-01-05" };
+  assert.ok(validateRecurrence({ ...input, counterparty: "x".repeat(161) }, s).errors.counterparty);
+  assert.ok(validateRecurrence({ ...input, reference: "x".repeat(101) }, s).errors.reference);
+  assert.ok(validateRecurrence({ ...input, notes: "x".repeat(3001) }, s).errors.notes);
+  for (const category of ["loan_capital", "loan_interest"]) {
+    assert.deepEqual(validateTransaction(loanInput({ category, amount: "100", capital: undefined, interest: undefined, insurance: undefined }), s).errors, {});
+  }
+});
+
+test("le CSV de trésorerie distingue la ventilation prévue du prêt des règlements sans la dupliquer", () => {
+  const s = fixture();
+  const result = validateTransaction(loanInput(), s);
+  s.transactions.push(result.value);
+  recordPayment(s, result.value.id, { date: "2026-03-05", amount: "400" });
+  recordPayment(s, result.value.id, { date: "2026-03-20", amount: "600" });
+  const csv = exportCSV(s, s.transactions);
+  const rows = csv.replace(/^\ufeff/, "").split("\r\n").map((row) => row.split(";").map((cell) => cell.slice(1, -1)));
+  const column = rows[0].indexOf("Capital prévu du prêt EUR");
+  assert.ok(column > 0);
+  assert.deepEqual(rows[1].slice(column), ["750,00", "220,00", "30,00"]);
+  assert.deepEqual(rows[2].slice(column), ["", "", ""]);
+  const optional = validateTransaction(loanInput({ capital: "1000", interest: "", insurance: "  " }), s);
+  assert.deepEqual(optional.errors, {});
+  assert.equal(optional.value.interestCents, 0);
+  assert.equal(optional.value.insuranceCents, 0);
+});

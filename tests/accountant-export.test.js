@@ -222,3 +222,66 @@ test("le CSV fournit les détails attendus, réglés, périodes et protège les 
   assert.ok(csvs["reglements.csv"].includes('"400,00"'));
   assert.ok(csvs["reglements.csv"].includes('"25,00"'));
 });
+
+test("le CSV distingue la ventilation attendue du prêt des règlements réels et conserve les informations du comptable", () => {
+  const s = fixture();
+  s.transactions = [{
+    ...s.transactions[1],
+    id: "loan-1",
+    label: "Échéance de prêt",
+    category: "loan_payment",
+    amountCents: 100000,
+    capitalCents: 75000,
+    interestCents: 22000,
+    insuranceCents: 3000,
+    counterparty: "Banque du bien",
+    reference: "PRET-2026-01",
+    notes: "À rapprocher du tableau bancaire",
+    payments: [{ id: "partial-loan", date: "2026-01-15", amountCents: 40000, rentCents: 0, chargesCents: 0 }],
+  }];
+  const selection = exportSelection(s, january);
+  const csvs = accountantCSVs(s, selection);
+  const operations = csvs["operations.csv"];
+  assert.match(operations, /"Capital de prêt attendu EUR";"Intérêts de prêt attendus EUR";"Assurance emprunteur attendue EUR"/);
+  assert.match(operations, /"1000,00";"0,00";"0,00";"750,00";"220,00";"30,00";"400,00";"600,00"/);
+  assert.match(operations, /"Banque du bien";"PRET-2026-01";"À rapprocher du tableau bancaire"/);
+  assert.match(csvs["reglements.csv"], /"400,00";"0,00";"0,00";"";"400,00"/);
+  assert.doesNotMatch(csvs["reglements.csv"], /Capital|Intérêts|Assurance emprunteur/);
+});
+
+test("les justificatifs enregistrés sont comptés même si leur contenu est exclu de l’export", () => {
+  const s = fixture();
+  const selection = exportSelection(s, { ...january, includeDocuments: false });
+  const csv = accountantCSVs(s, selection, {
+    documents: [
+      { id: "doc-1", transactionId: "t1", path: null },
+      { id: "doc-2", transactionId: "t1", path: null },
+    ],
+  })["operations.csv"];
+  assert.match(csv, /"Nombre de justificatifs enregistrés";"Justificatif manquant";"Justificatifs inclus"/);
+  const rows = csv.split("\r\n");
+  assert.match(rows.find((row) => row.startsWith('"t1";')), /;"2";"Non";"";"Non"$/);
+  assert.match(rows.find((row) => row.startsWith('"t3";')), /;"0";"Oui";"";"Non"$/);
+});
+
+test("le CSV seul utilise les compteurs authentifiés et laisse les justificatifs inconnus en démonstration", () => {
+  const s = fixture();
+  const selection = exportSelection(s, january);
+  const counts = new Map([["t1", 2]]);
+  const realCSV = accountantCSVs(s, selection, {
+    attachmentCounts: counts,
+  })["operations.csv"];
+  const realRows = realCSV.split("\r\n");
+  assert.match(realRows.find((row) => row.startsWith('"t1";')), /;"2";"Non";"";"Non"$/);
+  assert.match(realRows.find((row) => row.startsWith('"t3";')), /;"0";"Oui";"";"Non"$/);
+  const demoCSV = accountantCSVs(s, selection, {
+    attachmentCounts: null,
+  })["operations.csv"];
+  for (const row of demoCSV.split("\r\n").slice(1))
+    assert.match(row, /;"";"";"";"Non"$/);
+  const overriding = accountantCSVs(s, selection, {
+    attachmentCounts: counts,
+    documents: [{ transactionId: "t1", path: "Bien/Encaissements/preuve.pdf" }],
+  })["operations.csv"];
+  assert.match(overriding.split("\r\n").find((row) => row.startsWith('"t1";')), /;"2";"Non";"Bien\/Encaissements\/preuve.pdf";"Non"$/);
+});

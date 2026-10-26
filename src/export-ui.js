@@ -11,6 +11,7 @@ import {
 } from "./model.js";
 import { exportSelection, accountantCSVs } from "./accountant-export.js";
 import { icon, esc } from "./ui.js";
+import { api } from "./api.js";
 export function createExportUI(ctx) {
   let values = null,
     selectedIds = null,
@@ -111,20 +112,7 @@ export function createExportUI(ctx) {
       .addEventListener("click", () => downloadZip(content));
     content
       .querySelector("#download-accountant-csv")
-      .addEventListener("click", () => {
-        try {
-          const selection = select();
-          const files = accountantCSVs(ctx.getState(), selection);
-          ctx.download(
-            files["operations.csv"],
-            `cap-sci-operations-${values.startDate}-${values.endDate}.csv`,
-            "text/csv;charset=utf-8",
-          );
-          ctx.toast("Le CSV détaillé a été téléchargé.");
-        } catch (error) {
-          error(content, error.message);
-        }
-      });
+      .addEventListener("click", () => downloadCSV(content));
     preview(content);
   }
   function select(base = false) {
@@ -217,6 +205,46 @@ export function createExportUI(ctx) {
         preview(content);
       }),
     );
+  }
+  async function downloadCSV(content) {
+    if (busy || !ctx.isSynced()) return;
+    try {
+      const state = structuredClone(ctx.getState());
+      const userId = ctx.getUser()?.id || null;
+      const requestOptions = {
+        ...structuredClone(values),
+        ...(selectedIds !== null ? { operationIds: [...selectedIds] } : {}),
+      };
+      const selection = exportSelection(state, requestOptions);
+      if (!selection.transactions.length) return;
+      busy = true;
+      downloadError = "";
+      preview(content);
+      let attachmentCounts = null;
+      if (userId) {
+        const result = await api("/attachments/summary");
+        if (!result.counts || typeof result.counts !== "object" ||
+            Array.isArray(result.counts) ||
+            Object.values(result.counts).some((n) => !Number.isSafeInteger(n) || n < 0))
+          throw new Error("Impossible de vérifier les justificatifs. Réessayez le téléchargement du CSV.");
+        attachmentCounts = new Map(Object.entries(result.counts));
+        if (ctx.getUser()?.id !== userId)
+          throw new Error("Le compte a changé. Relancez l’export depuis le compte souhaité.");
+      }
+      const files = accountantCSVs(state, selection, { attachmentCounts });
+      ctx.download(
+        files["operations.csv"],
+        `cap-sci-operations-${requestOptions.startDate}-${requestOptions.endDate}.csv`,
+        "text/csv;charset=utf-8",
+      );
+      ctx.toast("Le CSV détaillé a été téléchargé.");
+    } catch (e) {
+      downloadError = e.message;
+      error(content, e.message);
+    } finally {
+      busy = false;
+      preview(content);
+    }
   }
   async function downloadZip(content) {
     if (busy || !ctx.getUser() || !ctx.isSynced()) return;

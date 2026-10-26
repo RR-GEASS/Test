@@ -49,13 +49,21 @@ Les montants de la fiche du bien servent de référence. Configurez ensuite une 
 
 Mettre une périodicité en pause ou la supprimer conserve toutes les échéances déjà créées et leurs règlements. La reprise repart d’aujourd’hui, sans recréer les mois suspendus. Modifier un modèle s’applique aux échéances non encore créées ; corrigez séparément une échéance existante si nécessaire. Archiver un bien met ses périodicités en pause.
 
-Pour un **prêt**, distinguez capital, intérêts et assurance si vous disposez de leur répartition. Une mensualité fixe ne signifie pas que capital et intérêts sont constants : ajustez les montants variables à partir du tableau d’amortissement. L’application ne reconstruit pas automatiquement ce tableau.
+Pour un **prêt**, choisissez la catégorie **Échéance de prêt** dans une opération ou une périodicité. Renseignez **Capital remboursé**, **Intérêts** et **Assurance emprunteur** : leur somme donne le montant total, sans créer trois prélèvements. L’assurance peut rester à zéro si elle est prélevée séparément ; saisissez alors une opération distincte pour éviter de la compter deux fois. Les anciennes catégories « Capital d’emprunt remboursé » et « Intérêts d’emprunt » restent disponibles.
+
+Dans **Pointage mensuel → Ajuster le prêt**, reportez chaque mois les montants du tableau d’amortissement bancaire avant de pointer le règlement. L’ajustement ne change que l’échéance choisie, sans toucher à la périodicité ni aux autres mois. Après un règlement, la répartition peut être corrigée à **total inchangé** ; pour corriger le montant payé, annulez d’abord les règlements concernés. L’application ne reconstruit pas automatiquement le tableau bancaire.
+
+Les opérations et périodicités proposent aussi **Fournisseur / bénéficiaire / locataire**, **Référence de facture** et **Note pour le comptable**. Les informations d’une périodicité sont reprises sur ses nouvelles échéances ; vérifiez les références propres à chaque mois. Elles figurent dans les CSV. La ventilation du prêt y est indiquée comme **montants attendus pour l’échéance entière**, distincts des règlements réels, notamment en cas de paiement partiel.
+
+Les fenêtres restent ouvertes lorsqu’on clique à côté : utilisez **Fermer**, **Annuler**, la touche Échap ou le bouton d’enregistrement.
 
 ![Pointage mensuel avec données fictives](docs/pointage.png)
 
 ## Joindre des justificatifs
 
 Dans le menu d’une opération ou depuis le pointage, ouvrez **Justificatifs** pour ajouter et télécharger des PDF, JPEG ou PNG. Limites : **5 Mo par fichier, 20 fichiers par opération, 50 Mo par compte**. L’accès nécessite le compte propriétaire. Les fichiers sont stockés dans la base SQLite, sans être publiés dans les fichiers du site.
+
+Le journal et le pointage affichent **Justificatif manquant** lorsqu’aucune pièce n’est jointe, puis le nombre de documents après ajout. Cet indicateur signale l’absence de pièce ; il ne détermine pas si une pièce est obligatoire ni si son contenu est correct. Le CSV comptable reprend le nombre de pièces et leur absence éventuelle, même si vous choisissez de ne pas inclure les documents dans le ZIP.
 
 À l’enregistrement, le document est automatiquement nommé d’après le **libellé de l’opération**. Son extension est conservée et un numéro distingue plusieurs pièces (`… (2).pdf`). Les caractères interdits dans les noms Windows sont remplacés et les libellés très longs sont raccourcis pour le nom du fichier. Le libellé complet reste dans le dossier comptable. Le nom original est conservé comme référence ; les octets du fichier ne sont pas modifiés. Les pièces existantes sont également mises au même format, et un changement de libellé actualise leurs noms.
 

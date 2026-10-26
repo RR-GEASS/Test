@@ -171,7 +171,7 @@ const statusName = (today) => (t) =>
 export function accountantCSVs(
   state,
   selection,
-  { documents = [], today = parisToday() } = {},
+  { documents = [], attachmentCounts, today = parisToday() } = {},
 ) {
   const { transactions, payments } = selection;
   const status = statusName(today);
@@ -186,7 +186,12 @@ export function accountantCSVs(
       );
   }
   const documentsByTransaction = new Map();
+  const documentCounts = new Map();
   for (const doc of documents) {
+    documentCounts.set(
+      doc.transactionId,
+      (documentCounts.get(doc.transactionId) || 0) + 1,
+    );
     if (!doc.path) continue;
     if (!documentsByTransaction.has(doc.transactionId))
       documentsByTransaction.set(doc.transactionId, []);
@@ -210,6 +215,9 @@ export function accountantCSVs(
       "Montant attendu EUR",
       "Loyer attendu EUR",
       "Provisions attendues EUR",
+      "Capital de prêt attendu EUR",
+      "Intérêts de prêt attendus EUR",
+      "Assurance emprunteur attendue EUR",
       "Total réglé historique EUR",
       "Reste à régler EUR",
       "Statut à la date de l’export",
@@ -221,6 +229,8 @@ export function accountantCSVs(
       "Nombre de règlements historiques",
       "Encaissements dans la plage EUR",
       "Décaissements dans la plage EUR",
+      "Nombre de justificatifs enregistrés",
+      "Justificatif manquant",
       "Justificatifs inclus",
       "Libellé automatique",
     ],
@@ -229,6 +239,10 @@ export function accountantCSVs(
     const p = propertiesById.get(t.propertyId);
     const ranged = rangedTotals.get(t.id) || 0;
     const files = documentsByTransaction.get(t.id) || [];
+    // null means unavailable (demo); omitted means metadata supplied by the ZIP.
+    const count = attachmentCounts === null
+      ? null
+      : (attachmentCounts ?? documentCounts).get(t.id) || 0;
     operations.push([
       t.id,
       transactionLabel(t, state),
@@ -246,6 +260,9 @@ export function accountantCSVs(
       moneyInput(t.amountCents),
       moneyInput(t.category === "rent" ? (t.rentCents ?? t.amountCents) : 0),
       moneyInput(t.category === "rent" ? (t.chargesCents ?? 0) : 0),
+      t.category === "loan_payment" ? moneyInput(t.capitalCents) : "",
+      t.category === "loan_payment" ? moneyInput(t.interestCents) : "",
+      t.category === "loan_payment" ? moneyInput(t.insuranceCents) : "",
       moneyInput(paidCents(t)),
       moneyInput(remainingCents(t)),
       status(t),
@@ -257,6 +274,8 @@ export function accountantCSVs(
       getPayments(t).length,
       t.type === "income" ? moneyInput(ranged) : "",
       t.type === "expense" ? moneyInput(ranged) : "",
+      count ?? "",
+      count === null ? "" : count ? "Non" : "Oui",
       files.map((f) => f.path).join("\n"),
       t.normalizedLabel ? "Oui" : "Non",
     ]);

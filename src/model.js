@@ -11,6 +11,7 @@ export const CATEGORIES = [
   { id: "insurance", label: "Assurances", type: "expense" },
   { id: "property_tax", label: "Taxe foncière", type: "expense" },
   { id: "condominium", label: "Copropriété", type: "expense" },
+  { id: "loan_payment", label: "Échéance de prêt", type: "expense" },
   { id: "loan_interest", label: "Intérêts d’emprunt", type: "expense" },
   { id: "loan_capital", label: "Capital d’emprunt remboursé", type: "expense" },
   { id: "management", label: "Frais de gestion", type: "expense" },
@@ -278,6 +279,33 @@ export function createDemoState() {
   );
   return state;
 }
+// Loan components describe the whole instalment, not individual payment records.
+function validateLoanComponents(input, value, errors) {
+  const fields = ["capital", "interest", "insurance"];
+  const amounts = fields.map((field) =>
+    input[field] !== undefined
+      ? parseMoney(
+          field !== "capital" && typeof input[field] === "string" && !clean(input[field])
+            ? "0"
+            : input[field],
+        )
+      : (input[`${field}Cents`] === undefined ? 0 : input[`${field}Cents`]),
+  );
+  const valid = amounts.every((n) => safeCents(n) && n >= 0);
+  if (value.category !== "loan_payment") {
+    if (!valid || amounts.some((n) => n !== 0))
+      errors.amount = "La ventilation du prêt est réservée aux échéances de prêt.";
+    return;
+  }
+  fields.forEach((field, index) => {
+    value[`${field}Cents`] = amounts[index];
+  });
+  const total = amounts.reduce((sum, amount) => sum + amount, 0);
+  if (input.amount === undefined && valid) value.amountCents = total;
+  if (!valid || !safeCents(total) || total <= 0 || total !== value.amountCents)
+    errors.amount =
+      "Le capital, les intérêts et l’assurance doivent être positifs ou nuls et correspondre au montant total du prêt.";
+}
 export function validateTransaction(input, state) {
   const value = {
     id: clean(input.id) || uid(),
@@ -350,6 +378,7 @@ export function validateTransaction(input, state) {
       errors.amount =
         "La ventilation du loyer et des provisions doit correspondre au montant total.";
   }
+  validateLoanComponents(input, value, errors);
   if (input.payments !== undefined) {
     const result = validatePayments(input.payments, value);
     if (result.error) errors.payments = result.error;
@@ -388,7 +417,7 @@ export function validateTransaction(input, state) {
     errors.reference = "100 caractères maximum.";
   if (value.notes.length > 3000) errors.notes = "3 000 caractères maximum.";
   const previous = state.transactions?.find((t) => t.id === value.id);
-  if (previous?.payments?.length) {
+  if (previous && getPayments(previous).length) {
     for (const field of ["type", "category", "propertyId", "amountCents"])
       if (previous[field] !== value[field])
         errors.amount =
@@ -716,6 +745,9 @@ export function exportCSV(state, transactions, { year = "all" } = {}) {
       "Reste EUR",
       "Loyer réglé EUR",
       "Provisions réglées EUR",
+      "Capital prévu du prêt EUR",
+      "Intérêts prévus du prêt EUR",
+      "Assurance prévue du prêt EUR",
     ],
   ];
   for (const t of transactions) {
@@ -757,6 +789,9 @@ export function exportCSV(state, transactions, { year = "all" } = {}) {
           : "",
         moneyInput(p?.rentCents ?? 0),
         moneyInput(p?.chargesCents ?? 0),
+        ...["capitalCents", "interestCents", "insuranceCents"].map((field) =>
+          index === 0 && t.category === "loan_payment" ? moneyInput(t[field]) : "",
+        ),
       ]);
   }
   return "\ufeff" + rows.map((row) => row.map(csvCell).join(";")).join("\r\n");
@@ -1000,6 +1035,8 @@ export function validateRecurrence(input, state) {
     rentCents: 0,
     chargesCents: 0,
     counterparty: clean(input.counterparty),
+    reference: clean(input.reference),
+    notes: clean(input.notes),
     frequency: input.frequency,
     startDate: clean(input.startDate),
     endDate: clean(input.endDate),
@@ -1040,6 +1077,7 @@ export function validateRecurrence(input, state) {
       errors.amount =
         "Le loyer et les provisions doivent correspondre au montant total.";
   }
+  validateLoanComponents(input, value, errors);
   if (value.amountCents === null || value.amountCents <= 0)
     errors.amount =
       "Saisissez un montant positif, avec au maximum 2 décimales.";
@@ -1069,6 +1107,9 @@ export function validateRecurrence(input, state) {
   if (value.detail.length > 160) errors.detail = "160 caractères maximum.";
   if (value.counterparty.length > 160)
     errors.counterparty = "160 caractères maximum.";
+  if (value.reference.length > 100)
+    errors.reference = "100 caractères maximum.";
+  if (value.notes.length > 3000) errors.notes = "3 000 caractères maximum.";
   if (value.label.length > 400) errors.label = "Libellé trop long.";
   return { value, errors };
 }
@@ -1161,8 +1202,15 @@ export function generateRecurringTransactions(
         propertyId: rule.propertyId,
         amountCents: rule.amountCents,
         counterparty: rule.counterparty,
-        reference: "",
-        notes: "",
+        reference: rule.reference || "",
+        notes: rule.notes || "",
+        ...(rule.category === "loan_payment"
+          ? {
+              capitalCents: rule.capitalCents,
+              interestCents: rule.interestCents,
+              insuranceCents: rule.insuranceCents,
+            }
+          : {}),
         detail: rule.detail || "",
         period: date.slice(0, 7),
         normalizedLabel: true,
