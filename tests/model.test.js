@@ -1050,3 +1050,14 @@ test("déplacer le solde initial conserve les anciens contrôles sans inventer u
   const bad = structuredClone(restored); bad.bankChecks[0].date = "2026-02-31";
   assert.throws(() => parseBackup(bad));
 });
+
+
+test("les rattachements fournisseur-bien restent des identifiants validés dans la sauvegarde", () => {
+  const s = directoryFixture();
+  s.properties[0].supplierIds = [s.suppliers[0].id];
+  const restored = parseBackup(serializeBackup(s));
+  assert.deepEqual(restored.properties[0].supplierIds, [s.suppliers[0].id]);
+  const invalid = structuredClone(s); invalid.properties[0].supplierIds = ["inconnu"];
+  assert.throws(() => parseBackup(invalid), /fournisseur/i);
+  assert.ok(validateProperty({...s.properties[0],rent:"800",charges:"50",supplierIds:["inconnu"]},s).errors.supplierIds);
+});

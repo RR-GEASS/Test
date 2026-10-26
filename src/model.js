@@ -560,8 +560,12 @@ export function validateProperty(input, state, excludeId = input.id) {
     rentCents: parseMoney(input.rent || "0"),
     chargesCents: parseMoney(input.charges || "0"),
     archived: input.archived === true,
+    supplierIds: input.supplierIds === undefined ? [] : input.supplierIds,
   };
   const errors = {};
+  if (!Array.isArray(value.supplierIds) || value.supplierIds.length > 5000 || value.supplierIds.some(id => typeof id !== "string" || !id || (state && !(state.suppliers || []).some(s => s.id === id))))
+    errors.supplierIds = "Choisissez des fournisseurs existants.";
+  else value.supplierIds = [...new Set(value.supplierIds)];
   if (!value.name || value.name.length > 100)
     errors.name = "Saisissez un nom de 1 à 100 caractères.";
   if (
@@ -576,6 +580,7 @@ export function validateProperty(input, state, excludeId = input.id) {
     errors.rent = "Saisissez un loyer valide, avec 2 décimales maximum.";
   if (value.chargesCents === null)
     errors.charges = "Saisissez des charges valides, avec 2 décimales maximum.";
+  if (input.supplierIds === undefined) delete value.supplierIds;
   return { value, errors };
 }
 export function validateSettings(input) {
@@ -855,6 +860,8 @@ export function parseBackup(raw) {
       state.recurrences.push(result.value);
     }
   }
+  for (const property of state.properties)
+    if ((property.supplierIds || []).some(id => !state.suppliers.some(s => s.id === id))) fail("Un fournisseur rattaché à un bien est introuvable.");
   const occurrences = new Set();
   for (const t of state.transactions)
     if (t.recurrenceId) {

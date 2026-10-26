@@ -110,10 +110,11 @@ export function createDirectoryUI(ctx) {
       await save("tenants", result.value, "La fiche locataire a été enregistrée.", onSaved);
     });
   }
-  function leaseForm(id, tenantId = "") {
+  function leaseForm(id, tenantId = "", propertyId = "") {
     if (!allowMutation()) return;
     const existing = find("leases", id);
-    const l = existing || { id: uid(), tenantId, propertyId: "", startDate: todayISO(), endDate: "", rentCents: 0, chargesCents: 0, depositCents: 0, paymentDay: 1, notes: "" };
+    const l = existing || { id: uid(), tenantId, propertyId, startDate: todayISO(), endDate: "", rentCents: 0, chargesCents: 0, depositCents: 0, paymentDay: 1, notes: "" };
+    if (!existing && propertyId) { const p = find("properties", propertyId); if (p) { l.rentCents = p.rentCents; l.chargesCents = p.chargesCents; } }
     const people = rows("tenants").filter((t) => !t.archived || t.id === l.tenantId);
     const properties = rows("properties").filter((p) => !p.archived || p.id === l.propertyId);
     if (!people.length || !properties.length) {
@@ -157,7 +158,7 @@ export function createDirectoryUI(ctx) {
   }
   function operationHistory(kind, id) {
     const linked = rows("transactions").filter((t) => t[`${kind}Id`] === id).sort((a, b) => b.date.localeCompare(a.date));
-    return linked.length ? `<div class="directory-history"><p class="form-note">${linked.length} opération(s) rattachée(s). Les noms saisis sur les opérations conservent leur historique.</p><ul>${linked.map((t) => `<li><div><strong>${esc(transactionLabel(t, getState()))}</strong><span>${shortDate(t.date)} · ${esc(t.counterparty)}</span></div><div><strong>${money(t.amountCents)}</strong><span>Réglé : ${money(paidCents(t))} · Reste : ${money(remainingCents(t))}</span></div></li>`).join("")}</ul></div>` : '<div class="empty-state"><p>Aucune opération rattachée à cette fiche.</p></div>';
+    return linked.length ? `<div class="directory-history"><p class="form-note">${linked.length} opération(s) rattachée(s). Les noms saisis sur les opérations conservent leur historique.</p><ul>${linked.map((t) => `<li><div>${button("edit-operation", t.id, esc(transactionLabel(t, getState())))}<span>${shortDate(t.date)} · ${esc(t.counterparty)}</span></div><div><strong>${money(t.amountCents)}</strong><span>Réglé : ${money(paidCents(t))} · Reste : ${money(remainingCents(t))}</span></div></li>`).join("")}</ul></div>` : '<div class="empty-state"><p>Aucune opération rattachée à cette fiche.</p></div>';
   }
   function personDetails(kind, id) {
     const person = find(collections[kind], id);
@@ -171,7 +172,7 @@ export function createDirectoryUI(ctx) {
       }
       panel.setAttribute("aria-labelledby", `directory-tab-${name}`);
       if (name === "contact") {
-        panel.innerHTML = `<dl class="directory-details">${detailItem("Nom", person.name)}${kind === "supplier" ? detailItem("Raison sociale", person.legalName) + detailItem("Référence client / contrat", person.reference) + detailItem("Catégorie habituelle", CATEGORIES.find((c) => c.id === person.category)?.label) + detailItem("SIRET", person.siret) : ""}${detailItem("E-mail", person.email)}${detailItem("Téléphone", person.phone)}${detailItem("Adresse", person.address)}${detailItem("Notes", person.notes)}</dl><div class="directory-detail-actions">${button(`edit-${kind}`, id, icon("edit") + " Modifier")}${button(`archive-${kind}`, id, person.archived ? "Réactiver la fiche" : "Désactiver la fiche")}</div>`;
+        panel.innerHTML = `<dl class="directory-details">${detailItem("Nom", person.name)}${kind === "supplier" ? detailItem("Raison sociale", person.legalName) + detailItem("Référence client / contrat", person.reference) + detailItem("Catégorie habituelle", CATEGORIES.find((c) => c.id === person.category)?.label) + detailItem("SIRET", person.siret) : ""}${detailItem("E-mail", person.email)}${detailItem("Téléphone", person.phone)}${detailItem("Adresse", person.address)}${detailItem("Notes", person.notes)}</dl>${kind === "supplier" ? `<h3>Biens associés</h3><div class="directory-detail-actions">${rows("properties").filter(p => (p.supplierIds || []).includes(id) || rows("transactions").some(t => t.supplierId === id && t.propertyId === p.id) || rows("recurrences").some(r => r.supplierId === id && r.propertyId === p.id)).map(p => button("view-property", p.id, esc(p.name))).join("") || '<p class="form-note">Aucun bien rattaché.</p>'}</div>` : ""}<div class="directory-detail-actions">${button(`edit-${kind}`, id, icon("edit") + " Modifier")}${button(`archive-${kind}`, id, person.archived ? "Réactiver la fiche" : "Désactiver la fiche")}</div>`;
       } else if (name === "leases") {
         const leases = rows("leases").filter((l) => l.tenantId === id).sort((a,b) => b.startDate.localeCompare(a.startDate));
         panel.innerHTML = `<div class="directory-detail-actions">${button("tenant-add-lease", id, icon("plus") + " Nouvelle location")}</div>${leases.length ? `<div class="directory-grid">${leases.map(leaseCard).join("")}</div>` : '<div class="empty-state"><p>Aucune location rattachée.</p></div>'}`;
@@ -216,6 +217,8 @@ export function createDirectoryUI(ctx) {
   }
   function action(name, id) {
     const handlers = {
+      "view-property": () => { closeDialog(); ctx.viewProperty(id); },
+      "edit-operation": () => { closeDialog(); ctx.editTransaction(id); },
       "add-supplier": () => supplierForm(), "edit-supplier": () => { closeDialog(); supplierForm(id); },
       "add-tenant": () => tenantForm(), "edit-tenant": () => { closeDialog(); tenantForm(id); },
       "add-lease": () => leaseForm(), "edit-lease": () => { closeDialog(); leaseForm(id); },

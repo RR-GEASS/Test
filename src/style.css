@@ -3144,3 +3144,9 @@ dialog h2 {
   color: var(--amber);
   font-weight: 600;
 }
+
+.entity-search { width:100%; margin-bottom:6px; padding:9px 11px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--text); min-width:0; }
+.property-suppliers { border:1px solid var(--line); border-radius:8px; margin:16px 0; padding:12px; }
+.property-suppliers label { margin-top:8px; }
+.property-suppliers label[hidden] { display:none; }
+.property-suppliers input[type=search] { width:100%; padding:9px; background:var(--surface); border:1px solid var(--line); border-radius:6px; }

@@ -49,6 +49,14 @@ Les fiches affichent les opérations rattachées par sélection explicite ; un m
 
 Les documents sont accessibles depuis les fiches : contrats sur le fournisseur, documents personnels sur le locataire, baux/avenants/états des lieux/assurances sur la location. Le dépôt accepte plusieurs PDF, JPEG ou PNG à la fois et indique les fichiers refusés. Le quota de 50 Mo par compte couvre tous les documents et justificatifs. Dans l’export comptable, **Inclure les baux et avenants** est une option volontaire, limitée aux locations des opérations retenues ; les documents personnels restent exclus. Les nouvelles fiches et contrôles sont conservés dans le JSON, les fichiers restent dans la sauvegarde complète du serveur.
 
+## Liens et saisie assistée
+
+Les champs Bien, Fournisseur, Locataire et Location proposent une recherche par nom en plus de leur liste. Choisir un résultat enregistre l’identifiant de la fiche, pas seulement son nom. Une saisie sans correspondance exacte ne crée pas de rattachement implicite. Vous pouvez créer un fournisseur ou un locataire pendant la saisie d’une opération ou périodicité.
+
+Choisir un bien pour un loyer propose sa location à la date de l’opération lorsqu’elle est unique. Choisir un locataire retrouve sa location si elle est unique pour le bien et la date ; sinon, choisissez la location explicitement. Celle-ci complète bien, locataire, loyer et provisions. Un fournisseur propose sa catégorie et, si un seul bien lui est explicitement rattaché, ce bien.
+
+Dans **Biens immobiliers → Modifier**, cochez les fournisseurs habituels du bien. **Dossier du bien** rassemble ses locations, les fournisseurs explicitement rattachés ou présents dans ses mouvements et un accès aux opérations. Les fiches fournisseurs affichent les biens associés ; le journal permet d’ouvrir les fiches liées. Pour rattacher un locataire au bien, créez une location datée depuis son dossier, afin de conserver l’historique. Ces liens sont conservés dans la base SQLite et les sauvegardes JSON. Une simple égalité de noms ne rattache pas automatiquement les anciennes saisies.
+
 ## Gagner du temps chaque mois
 
 - Filtrez le pointage par bien, sens et reste à pointer ; changer un filtre remet la sélection de règlements à zéro.

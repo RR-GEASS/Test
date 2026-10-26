@@ -145,7 +145,7 @@ export function createFinanceUI(ctx) {
         "Catégorie",
         CATEGORIES.filter((c) => c.type === r.type),
         r.category,
-      )}${selectField("propertyId", "Bien", propertyOptions(), r.propertyId)}${selectField("frequency", "Fréquence", frequencies, r.frequency)}</div><div class="form-grid">${selectField("supplierId", "Fournisseur enregistré", [{id:"",label:"Aucun fournisseur"}, ...(getState().suppliers || []).filter(s => !s.archived || s.id === r.supplierId).map(s => ({id:s.id,label:s.name}))], r.supplierId || "")}${selectField("leaseId", "Location associée", [{id:"",label:"Aucune location"}, ...(getState().leases || []).filter(l => !l.endDate || l.endDate >= todayISO() || l.id === r.leaseId).map(l => ({id:l.id,label: `${prop(l.propertyId)?.name || "Bien"} · ${(getState().tenants || []).find(t => t.id === l.tenantId)?.name || "Locataire"}`}))], r.leaseId || "")}</div><input type="hidden" name="tenantId" value="${esc(r.tenantId || "")}"><p class="form-note">La location propose les montants du bail et son locataire. Le fournisseur propose sa catégorie habituelle.</p><div id="recurring-amounts"></div><div class="form-grid">${field("startDate", "Date de début *", r.startDate, "date", "required")}${field("endDate", "Date de fin", r.endDate, "date")}${field("paymentDay", "Jour d’échéance (1 à 31)", r.paymentDay || Number(r.startDate.slice(8,10)), "number", 'min="1" max="31" step="1" required')}</div>${field("detail", "Détail", r.detail || "", "text", 'maxlength="160" placeholder="Ex. : Assurance propriétaire"')}${field("counterparty", "Fournisseur / bénéficiaire / locataire", r.counterparty || "", "text", 'maxlength="160"')}${field("reference", "Référence de facture", r.reference || "", "text", 'maxlength="100"')}<div class="form-field"><label for="field-notes">Note pour le comptable</label><textarea id="field-notes" name="notes" maxlength="3000" rows="3">${esc(r.notes || "")}</textarea><span class="field-error" data-error="notes"></span></div><label class="check-label"><input type="checkbox" name="documentNotRequired" ${r.documentNotRequired ? "checked" : ""}>Justificatif non nécessaire pour ces échéances</label><p class="auto-label-preview" id="recurrence-preview"></p><p class="form-note">Le jour d’échéance choisi est conservé à chaque période. Si ce jour n’existe pas, l’échéance tombe le dernier jour du mois. Pour un prêt, choisissez « Échéance de prêt » et renseignez la répartition capital, intérêts et assurance. Vous pourrez l’ajuster chaque mois dans « Pointage mensuel », d’après le tableau d’amortissement bancaire.</p><p class="form-note">Les échéances jusqu’à la fin du mois courant seront ajoutées en attente. Les échéances déjà créées ne seront pas modifiées.</p>${formFooter(existing ? "Enregistrer" : "Créer la périodicité")}</form></dialog>`,
+      )}${selectField("propertyId", "Bien", propertyOptions(), r.propertyId)}${selectField("frequency", "Fréquence", frequencies, r.frequency)}</div><div class="form-grid">${selectField("supplierId", "Fournisseur enregistré", [{id:"",label:"Aucun fournisseur"}, ...(getState().suppliers || []).filter(s => !s.archived || s.id === r.supplierId).map(s => ({id:s.id,label:s.name}))], r.supplierId || "")}${selectField("leaseId", "Location associée", [{id:"",label:"Aucune location"}, ...(getState().leases || []).filter(l => !l.endDate || l.endDate >= todayISO() || l.id === r.leaseId).map(l => ({id:l.id,label: `${prop(l.propertyId)?.name || "Bien"} · ${(getState().tenants || []).find(t => t.id === l.tenantId)?.name || "Locataire"}`}))], r.leaseId || "")}</div>${selectField("tenantId", "Locataire enregistré", [{id:"",label:"Aucun locataire"}, ...(getState().tenants || []).filter(t => !t.archived || t.id === r.tenantId).map(t => ({id:t.id,label:t.name}))],r.tenantId || "")}<p class="form-note">La location propose les montants du bail et son locataire. Le fournisseur propose sa catégorie habituelle.</p><div id="recurring-amounts"></div><div class="form-grid">${field("startDate", "Date de début *", r.startDate, "date", "required")}${field("endDate", "Date de fin", r.endDate, "date")}${field("paymentDay", "Jour d’échéance (1 à 31)", r.paymentDay || Number(r.startDate.slice(8,10)), "number", 'min="1" max="31" step="1" required')}</div>${field("detail", "Détail", r.detail || "", "text", 'maxlength="160" placeholder="Ex. : Assurance propriétaire"')}${field("counterparty", "Fournisseur / bénéficiaire / locataire", r.counterparty || "", "text", 'maxlength="160"')}${field("reference", "Référence de facture", r.reference || "", "text", 'maxlength="100"')}<div class="form-field"><label for="field-notes">Note pour le comptable</label><textarea id="field-notes" name="notes" maxlength="3000" rows="3">${esc(r.notes || "")}</textarea><span class="field-error" data-error="notes"></span></div><label class="check-label"><input type="checkbox" name="documentNotRequired" ${r.documentNotRequired ? "checked" : ""}>Justificatif non nécessaire pour ces échéances</label><p class="auto-label-preview" id="recurrence-preview"></p><p class="form-note">Le jour d’échéance choisi est conservé à chaque période. Si ce jour n’existe pas, l’échéance tombe le dernier jour du mois. Pour un prêt, choisissez « Échéance de prêt » et renseignez la répartition capital, intérêts et assurance. Vous pourrez l’ajuster chaque mois dans « Pointage mensuel », d’après le tableau d’amortissement bancaire.</p><p class="form-note">Les échéances jusqu’à la fin du mois courant seront ajoutées en attente. Les échéances déjà créées ne seront pas modifiées.</p>${formFooter(existing ? "Enregistrer" : "Créer la périodicité")}</form></dialog>`,
     );
     let customPaymentDay = !!r.paymentDay;
     d.querySelector("[name=paymentDay]").addEventListener("input", () => { customPaymentDay = true; });
@@ -162,6 +162,15 @@ export function createFinanceUI(ctx) {
       button.addEventListener("click", () => ctx.createSupplier(supplier => {
         supplierSelect.innerHTML = options([{id:"",label:"Aucun fournisseur"}, ...(getState().suppliers || []).filter(s => !s.archived || s.id === supplier.id).map(s => ({id:s.id,label:s.name}))], supplier.id);
         supplierSelect.dispatchEvent(new Event("change"));
+      }));
+    }
+    if (ctx.createTenant) {
+      const select=d.querySelector("[name=tenantId]");
+      const button=document.createElement("button");button.type="button";button.className="text-link";button.textContent="Créer un locataire";
+      select.closest(".form-field").append(button);
+      button.addEventListener("click",()=>ctx.createTenant(tenant=>{
+        select.innerHTML=options([{id:"",label:"Aucun locataire"},...(getState().tenants || []).filter(t=>!t.archived || t.id===tenant.id).map(t=>({id:t.id,label:t.name}))],tenant.id);
+        select.dispatchEvent(new Event("change",{bubbles:true}));
       }));
     }
     function amounts() {
@@ -247,6 +256,11 @@ export function createFinanceUI(ctx) {
         if (!d.querySelector("[name=counterparty]").value)
           d.querySelector("[name=counterparty]").value = p.tenant;
       }
+      if (p && d.querySelector("[name=type]").value === "income" && d.querySelector("[name=category]").value === "rent") {
+        const date=d.querySelector("[name=startDate]").value;
+        const matches=(getState().leases || []).filter(l=>l.propertyId===p.id && l.startDate<=date && (!l.endDate || l.endDate>=date));
+        if(matches.length===1) { const select=d.querySelector("[name=leaseId]");select.value=matches[0].id;select.dispatchEvent(new Event("change",{bubbles:true})); }
+      }
       preview();
     });
     d.querySelector("[name=supplierId]").addEventListener("change", (e) => {
@@ -256,7 +270,22 @@ export function createFinanceUI(ctx) {
       d.querySelector("[name=type]").value = "expense";
       d.querySelector("[name=category]").innerHTML = options(CATEGORIES.filter(c => c.type === "expense"), supplier.category || "other_expense");
       d.querySelector("[name=counterparty]").value = supplier.name;
+      const properties=getState().properties.filter(p=>(p.supplierIds || []).includes(supplier.id));
+      if(!d.querySelector("[name=propertyId]").value && properties.length===1) d.querySelector("[name=propertyId]").value=properties[0].id;
       amounts();
+    });
+    d.querySelector("[name=tenantId]").addEventListener("change", e => {
+      const tenant = (getState().tenants || []).find(t => t.id === e.target.value);
+      d.querySelector("[name=leaseId]").value = "";
+      if (tenant) {
+        d.querySelector("[name=supplierId]").value = "";
+        d.querySelector("[name=counterparty]").value = tenant.name;
+        const property = d.querySelector("[name=propertyId]").value;
+        const date = d.querySelector("[name=startDate]").value;
+        const matches = (getState().leases || []).filter(l => l.tenantId === tenant.id && (!property || l.propertyId === property) && l.startDate <= date && (!l.endDate || l.endDate >= date));
+        if (matches.length === 1) { const select=d.querySelector("[name=leaseId]");select.value=matches[0].id;select.dispatchEvent(new Event("change",{bubbles:true})); }
+      }
+      preview();
     });
     d.querySelector("[name=leaseId]").addEventListener("change", (e) => {
       const lease = (getState().leases || []).find(l => l.id === e.target.value);
