@@ -247,3 +247,64 @@ test("un ancien onglet ne peut pas enregistrer sa SCI dans un compte différent"
     await h.close();
   }
 });
+test("les échéances générées côté serveur persistent sans doublon ni réapparition après suppression", async () => {
+  const h = await harness();
+  try {
+    const a = await register(h);
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const startDate = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-01`;
+    a.data.state.recurrences = [
+      {
+        id: "rec-api",
+        type: "expense",
+        category: "insurance",
+        propertyId: "",
+        amountCents: 4200,
+        rentCents: 0,
+        chargesCents: 0,
+        counterparty: "Assureur",
+        detail: "Assurance mensuelle",
+        frequency: "monthly",
+        startDate,
+        endDate: "",
+        active: true,
+        generatedThrough: "",
+      },
+    ];
+    const saved = await h.request("/api/state", {
+      method: "PUT",
+      cookie: a.cookie,
+      body: { accountId: a.data.user.id, state: a.data.state, revision: 0 },
+    });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.data.state.transactions.length, 2);
+    assert.ok(
+      saved.data.state.transactions.every((t) => t.status === "pending"),
+    );
+    const loaded = await h.request("/api/session", { cookie: a.cookie });
+    assert.equal(loaded.data.revision, saved.data.revision);
+    assert.deepEqual(
+      loaded.data.state.transactions.map((t) => t.id),
+      saved.data.state.transactions.map((t) => t.id),
+    );
+    loaded.data.state.transactions.shift();
+    const deleted = await h.request("/api/state", {
+      method: "PUT",
+      cookie: a.cookie,
+      body: {
+        accountId: a.data.user.id,
+        state: loaded.data.state,
+        revision: loaded.data.revision,
+      },
+    });
+    assert.equal(deleted.status, 200);
+    assert.equal(
+      (await h.request("/api/session", { cookie: a.cookie })).data.state
+        .transactions.length,
+      1,
+    );
+  } finally {
+    await h.close();
+  }
+});

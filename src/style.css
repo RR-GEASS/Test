@@ -2705,3 +2705,421 @@ dialog h2 {
 [data-theme="dark"] .eyebrow {
   color: #b5a6c5;
 }
+/* Périodicités, pointage et règlements */
+.recurrence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.recurrence-card {
+  padding: 21px;
+}
+.recurrence-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.recurrence-top .feature-icon {
+  margin: 0;
+}
+.recurrence-card h2 {
+  font-size: 13px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+.recurrence-amount {
+  font-family: "Manrope", sans-serif;
+  display: block;
+  font-size: 25px;
+  margin: 17px 0 9px;
+  letter-spacing: -0.6px;
+}
+.recurrence-amount small {
+  font-family: "DM Sans", sans-serif;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+.recurrence-card > p {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.8;
+}
+.recurrence-card dl {
+  font-size: 10px;
+  color: var(--subtle);
+  margin: 18px 0;
+}
+.recurrence-card dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 9px 0;
+}
+.recurrence-card dt {
+  color: var(--muted);
+}
+.recurrence-card dd {
+  margin: 0;
+  text-align: right;
+}
+.recurrence-card .property-actions {
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.auto-label-preview {
+  padding: 12px;
+  border: 1px dashed #c6b8de;
+  border-radius: 7px;
+  background: var(--soft);
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--subtle);
+  margin: 0 0 15px;
+  overflow-wrap: anywhere;
+}
+.check-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--subtle);
+  line-height: 1.8;
+  margin-bottom: 15px;
+}
+.check-label input {
+  accent-color: var(--primary);
+  width: 15px;
+  height: 15px;
+}
+.form-field input[readonly] {
+  background: var(--column);
+  color: var(--subtle);
+  font-size: 11px;
+}
+.finance-error {
+  font-size: 11px;
+  line-height: 1.8;
+  color: #a44756;
+  margin: 14px 0;
+  overflow-wrap: anywhere;
+}
+.finance-error:empty {
+  display: none;
+}
+.pointing-toolbar {
+  display: flex;
+  gap: 18px;
+  align-items: end;
+  flex-wrap: wrap;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 17px;
+  margin-bottom: 20px;
+}
+.pointing-toolbar .form-field {
+  margin-bottom: 0;
+  flex: 1;
+  min-width: 140px;
+  max-width: 230px;
+}
+.pointing-toolbar > .button {
+  margin-left: auto;
+}
+.pointing-toolbar > div:first-child > strong {
+  font-family: "Manrope", sans-serif;
+  font-size: 24px;
+}
+.pointing-toolbar > div:first-child > span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.pointing-table {
+  min-width: 870px;
+}
+.pointing-table td {
+  line-height: 1.8;
+}
+.pointing-table td:nth-child(2) {
+  min-width: 220px;
+  max-width: 300px;
+}
+.pointing-table td > strong {
+  font-weight: 500;
+}
+.pointing-table small {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+  margin-top: 5px;
+}
+.pointing-table input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+.pointing-table td:nth-child(3),
+.pointing-table td:nth-child(4),
+.pointing-table td:nth-child(5) {
+  white-space: nowrap;
+}
+.point-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+}
+.point-actions .text-link {
+  font-size: 9px;
+  white-space: nowrap;
+}
+#selection-total {
+  font-size: 10px;
+  color: var(--muted);
+  text-align: right;
+}
+.status-pill.partial {
+  background: #edf0fb;
+  color: #596d9a;
+}
+.status-pill.overdue {
+  background: #fff0ee;
+  color: #a14c50;
+}
+.payment-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  font-size: 11px;
+  color: var(--subtle);
+  background: var(--column);
+  padding: 13px;
+  border-radius: 7px;
+  margin-bottom: 20px;
+}
+.payment-summary strong {
+  font-weight: 600;
+}
+.payment-list {
+  list-style: none;
+  padding: 0;
+  margin: 20px 0;
+}
+.payment-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.payment-list strong,
+.payment-list small {
+  display: block;
+}
+.payment-list strong {
+  font-size: 14px;
+  font-family: "Manrope", sans-serif;
+  margin: 4px 0;
+}
+.payment-list small {
+  font-size: 9px;
+  color: var(--muted);
+}
+.payment-list a {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.payment-list .text-link {
+  flex-shrink: 0;
+  font-size: 10px;
+}
+.forecast-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.forecast-summary .stat-card > span {
+  font-size: 10px;
+  color: var(--muted);
+}
+.forecast-summary .stat-card > strong {
+  display: block;
+  font-family: "Manrope", sans-serif;
+  font-size: 25px;
+  margin-top: 12px;
+  letter-spacing: -0.6px;
+}
+.forecast-negative {
+  color: #a14c50;
+}
+.forecast-note {
+  margin-top: 18px;
+}
+.amount > small {
+  display: block;
+  font-size: 8px;
+  line-height: 1.8;
+  font-weight: 400;
+  color: var(--muted);
+  white-space: normal;
+  margin-top: 4px;
+}
+.danger-text {
+  color: #a64f60;
+}
+[data-theme="dark"] .status-pill.partial {
+  background: #30374a;
+  color: #b4c6ed;
+}
+[data-theme="dark"] .status-pill.overdue {
+  background: #472d35;
+  color: #edb0b8;
+}
+[data-theme="dark"] .finance-error,
+[data-theme="dark"] .forecast-negative,
+[data-theme="dark"] .danger-text {
+  color: #edb0b8;
+}
+.sidebar > nav {
+  flex-shrink: 0;
+}
+.sidebar {
+  overflow-y: auto;
+}
+.sidebar-bottom {
+  padding-top: 24px;
+}
+@media (max-width: 1000px) {
+  .forecast-summary .stat-card > strong {
+    font-size: 20px;
+  }
+  .recurrence-grid {
+    gap: 12px;
+  }
+  .recurrence-card {
+    padding: 17px;
+  }
+  .recurrence-card h2 {
+    font-size: 12px;
+  }
+  .recurrence-amount {
+    font-size: 23px;
+  }
+  .sidebar-bottom {
+    padding-top: 20px;
+  }
+  .advisor-card {
+    padding: 13px;
+  }
+  .nav-item {
+    min-height: 39px;
+    padding-top: 9px;
+    padding-bottom: 9px;
+  }
+}
+@media (max-width: 580px) {
+  .recurrence-grid {
+    grid-template-columns: 1fr;
+  }
+  .recurrence-card {
+    padding: 20px;
+  }
+  .recurrence-card h2 {
+    font-size: 14px;
+  }
+  .recurrence-amount {
+    font-size: 28px;
+  }
+  .recurrence-card dl {
+    font-size: 11px;
+  }
+  .pointing-toolbar {
+    padding: 14px;
+    gap: 15px;
+  }
+  .pointing-toolbar .form-field {
+    min-width: 120px;
+  }
+  .pointing-toolbar > .button {
+    width: 100%;
+    margin-left: 0;
+    font-size: 12px;
+  }
+  .pointing-table {
+    min-width: 900px;
+  }
+  .pointing-table td {
+    font-size: 11px;
+  }
+  .forecast-summary {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .forecast-summary .stat-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .forecast-summary .stat-card > strong {
+    margin: 0;
+    font-size: 22px;
+  }
+  .forecast-summary .stat-card > span {
+    max-width: 170px;
+    font-size: 10px;
+  }
+  .check-label {
+    font-size: 11px;
+  }
+  .payment-list li {
+    gap: 10px;
+  }
+  .payment-list .text-link {
+    font-size: 9px;
+  }
+  .recurrence-top .status-pill {
+    font-size: 9px;
+  }
+  .auto-label-preview {
+    font-size: 12px;
+  }
+  .nav-item {
+    font-size: 11px;
+    min-height: 39px;
+  }
+  .workspace-label {
+    margin-top: 22px;
+    margin-bottom: 22px;
+  }
+}
+
+.nav-item.active:hover {
+  color: #694caf;
+}
+[data-theme="dark"] .nav-item.active:hover {
+  color: #cfb5ec;
+}
+@media (max-width: 580px) {
+  .finance-scroll::after {
+    content: "Faites défiler le tableau pour voir les montants et les actions.";
+    display: block;
+    position: sticky;
+    left: 0;
+    width: calc(100vw - 36px);
+    padding: 12px 14px;
+    font-size: 9px;
+    color: var(--muted);
+    line-height: 1.8;
+  }
+}

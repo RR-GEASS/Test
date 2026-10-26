@@ -30,7 +30,7 @@ async function addProperty(page, name = "Appartement Érable") {
     .getByRole("button", { name: "Ajouter un bien", exact: true })
     .click();
   const d = page.getByRole("dialog");
-  await d.getByLabel("Nom du bien *").fill(name);
+  await d.getByLabel("Nom court du bien *").fill(name);
   await d.getByLabel("Adresse", { exact: true }).fill("Rue des Tests");
   await d.getByLabel("Locataire", { exact: true }).fill("Locataire de test");
   await d.getByLabel("Loyer mensuel hors charges (€)").fill("800,50");
@@ -56,21 +56,24 @@ async function addTransaction(page, label = "Loyer de test", settings = {}) {
   const d = page.getByRole("dialog");
   if (settings.type)
     await d.getByLabel("Type", { exact: true }).selectOption(settings.type);
-  await d.getByLabel("Libellé *").fill(label);
+  await d
+    .getByLabel("Catégorie", { exact: true })
+    .selectOption(
+      settings.category ||
+        (settings.type === "expense" ? "other_expense" : "other_income"),
+    );
+  await d.getByLabel("Détail (facultatif)").fill(label);
   await d.getByLabel("Montant (€) *").fill(settings.amount || "800,50");
   await d
     .getByLabel("Date / échéance *")
     .fill(settings.date || `${new Date().getFullYear()}-01-01`);
-  if (settings.status)
-    await d.getByLabel("Statut", { exact: true }).selectOption(settings.status);
+  await d
+    .getByLabel("Statut", { exact: true })
+    .selectOption(settings.status || "paid");
   if (settings.property)
     await d
       .getByLabel("Bien", { exact: true })
       .selectOption({ label: settings.property });
-  if (settings.category)
-    await d
-      .getByLabel("Catégorie", { exact: true })
-      .selectOption(settings.category);
   await d
     .getByRole("button", { name: "Ajouter l’opération", exact: true })
     .click();
@@ -82,7 +85,10 @@ async function addTransaction(page, label = "Loyer de test", settings = {}) {
 async function navigate(page, name) {
   await page
     .locator("aside nav")
-    .getByRole("button", { name, exact: false })
+    .getByRole("button", {
+      name: name === "Biens immobiliers" ? /^Biens immobiliers/ : name,
+      exact: name !== "Biens immobiliers",
+    })
     .click();
 }
 test.beforeEach(async ({ page }) => {
@@ -130,15 +136,14 @@ test("les montants invalides sont refusés puis une opération peut être modifi
     .getByRole("button", { name: "Nouvelle opération", exact: true })
     .click();
   const d = page.getByRole("dialog");
-  await d.getByLabel("Libellé *").fill("Réparation à modifier");
+  await d.getByLabel("Catégorie", { exact: true }).selectOption("other_income");
+  await d.getByLabel("Détail (facultatif)").fill("Réparation à modifier");
   await d.getByLabel("Montant (€) *").fill("1,005");
   await d
     .getByRole("button", { name: "Ajouter l’opération", exact: true })
     .click();
   await expect(d).toBeVisible();
-  await expect(
-    d.getByText("Saisissez un montant positif, avec au maximum 2 décimales."),
-  ).toBeVisible();
+  await expect(d.locator("[data-error=amount]")).toBeVisible();
   await d.getByLabel("Montant (€) *").fill("125,90");
   await d
     .getByRole("button", { name: "Ajouter l’opération", exact: true })
@@ -148,12 +153,12 @@ test("les montants invalides sont refusés puis une opération peut être modifi
   ).toBeVisible();
   await navigate(page, "Opérations");
   await row(page, "Réparation à modifier")
-    .getByRole("button", { name: "Actions pour Réparation à modifier" })
+    .locator("[data-action=operation-menu]")
     .click();
   await page.getByRole("menuitem", { name: "Modifier", exact: true }).click();
   await page
     .getByRole("dialog")
-    .getByLabel("Libellé *")
+    .getByLabel("Détail (facultatif)")
     .fill("Réparation modifiée");
   await page
     .getByRole("dialog")
@@ -161,7 +166,7 @@ test("les montants invalides sont refusés puis une opération peut être modifi
     .click();
   await expect(row(page, "Réparation modifiée")).toHaveCount(1);
   await row(page, "Réparation modifiée")
-    .getByRole("button", { name: "Actions pour Réparation modifiée" })
+    .locator("[data-action=operation-menu]")
     .click();
   await page.getByRole("menuitem", { name: "Supprimer", exact: true }).click();
   await page
@@ -185,9 +190,11 @@ test("une échéance en attente n’affecte pas le solde puis un règlement le m
   await expect(page.getByTestId("metric-3")).toContainText("900,25");
   await navigate(page, "Opérations");
   await row(page, "Loyer en attente")
-    .getByRole("button", { name: "Actions pour Loyer en attente" })
+    .locator("[data-action=operation-menu]")
     .click();
-  await page.getByRole("menuitem", { name: "Marquer comme réglée" }).click();
+  await page
+    .getByRole("menuitem", { name: "Enregistrer un règlement" })
+    .click();
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "Enregistrer le règlement", exact: true })
@@ -416,7 +423,10 @@ test("un conflit entre appareils conserve la version du serveur et propose de r�
       .getByRole("button", { name: "Nouvelle opération", exact: true })
       .click();
     const d = other.getByRole("dialog");
-    await d.getByLabel("Libellé *").fill("Modification concurrente");
+    await d
+      .getByLabel("Catégorie", { exact: true })
+      .selectOption("other_income");
+    await d.getByLabel("Détail (facultatif)").fill("Modification concurrente");
     await d.getByLabel("Montant (€) *").fill("25");
     await addTransaction(page, "Mouvement déjà enregistré", { amount: "100" });
     await d
@@ -457,7 +467,8 @@ test("une session interrompue permet de se reconnecter sans perdre l’opératio
     .getByRole("button", { name: "Nouvelle opération", exact: true })
     .click();
   const d = page.getByRole("dialog");
-  await d.getByLabel("Libellé *").fill("Règlement après reconnexion");
+  await d.getByLabel("Catégorie", { exact: true }).selectOption("other_income");
+  await d.getByLabel("Détail (facultatif)").fill("Règlement après reconnexion");
   await d.getByLabel("Montant (€) *").fill("75,30");
   await page.evaluate(() =>
     fetch("/api/logout", {
@@ -491,9 +502,7 @@ test("les libellés restent du texte dans les confirmations de suppression", asy
   const label = '<img src=x onerror="window.__sciInjected=true">';
   await addTransaction(page, label);
   await navigate(page, "Opérations");
-  await row(page, label)
-    .getByRole("button", { name: `Actions pour ${label}`, exact: true })
-    .click();
+  await row(page, label).locator("[data-action=operation-menu]").click();
   await page.getByRole("menuitem", { name: "Supprimer", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText(label);

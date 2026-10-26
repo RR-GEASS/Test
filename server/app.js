@@ -11,7 +11,11 @@ import {
   createEmptyState,
   parseBackup,
   validateSettings,
+  generateRecurringTransactions,
+  monthEnd,
+  todayISO,
 } from "../src/model.js";
+import { installAttachments } from "./attachments.js";
 
 const derive = promisify(scrypt);
 const digest = (value) => createHash("sha256").update(value).digest("hex");
@@ -132,15 +136,38 @@ export function createApp({
     ).run(digest(token), user.id, Date.now() + SESSION_MS);
     res.cookie(COOKIE, token, cookieOptions);
   }
-  const payload = (user) => ({
-    user: { id: user.id, email: user.email },
-    state: JSON.parse(user.state),
-    revision: user.revision,
-  });
+  function refreshRecurring(user) {
+    const state = parseBackup(user.state);
+    const before = JSON.stringify(state);
+    generateRecurringTransactions(
+      state,
+      monthEnd(
+        new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Paris" }).format(
+          new Date(),
+        ),
+      ),
+    );
+    if (JSON.stringify(state) !== before) {
+      db.prepare(
+        "UPDATE users SET state=?, revision=revision+1 WHERE id=? AND revision=?",
+      ).run(JSON.stringify(state), user.id, user.revision);
+      return db.prepare("SELECT * FROM users WHERE id=?").get(user.id);
+    }
+    return user;
+  }
+  const payload = (user) => {
+    user = refreshRecurring(user);
+    return {
+      user: { id: user.id, email: user.email },
+      state: JSON.parse(user.state),
+      revision: user.revision,
+    };
+  };
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
   app.get("/api/session", requireUser, (req, res) =>
     res.json(payload(req.user)),
   );
+  installAttachments(app, db, requireUser);
   app.post("/api/register", async (req, res, next) => {
     try {
       const { email, password, name } = req.body || {};
@@ -244,6 +271,14 @@ export function createApp({
     try {
       state = parseBackup(input);
       state.mode = "real";
+      generateRecurringTransactions(
+        state,
+        monthEnd(
+          new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Paris" }).format(
+            new Date(),
+          ),
+        ),
+      );
     } catch (error) {
       return res.status(400).json({ error: error.message });
     }
@@ -258,7 +293,7 @@ export function createApp({
           "Votre SCI a été modifiée sur un autre appareil. Exportez vos modifications puis rechargez les données.",
         code: "conflict",
       });
-    res.json({ revision: revision + 1 });
+    res.json({ revision: revision + 1, state });
   });
   app.use("/api", (_req, res) =>
     res.status(404).json({ error: "Adresse API introuvable." }),

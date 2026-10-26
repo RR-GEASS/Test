@@ -13,6 +13,21 @@ import {
   parseBackup,
   serializeBackup,
   exportCSV,
+  validateRecurrence,
+  recurrenceDates,
+  generateRecurringTransactions,
+  nextRecurrenceDate,
+  monthEnd,
+  setRecurrenceActive,
+  transactionLabel,
+  getPayments,
+  paidCents,
+  remainingCents,
+  transactionStatus,
+  recordPayment,
+  recordPaymentsBatch,
+  getForecast,
+  suggestedAllocation,
 } from "../src/model.js";
 const property = {
   id: "p1",
@@ -276,7 +291,7 @@ test("le CSV garde le statut et protège les cellules texte contre les formules 
   const csv = exportCSV(s, s.transactions);
   assert.ok(csv.startsWith("\ufeff"));
   assert.ok(csv.includes("'="));
-  assert.ok(csv.includes("En attente"));
+  assert.ok(csv.includes("En retard"));
   assert.ok(csv.includes("100,10"));
   assert.ok(csv.includes("ligne1\nligne2"));
 });
@@ -292,4 +307,478 @@ test("une échéance de décembre payée en janvier est comptée au règlement e
     "2025-12-05",
   );
   assert.ok(exportCSV(s, s.transactions).includes("2025-12-05"));
+});
+
+function rule(overrides = {}) {
+  const state = fixture();
+  const result = validateRecurrence(
+    {
+      id: "r1",
+      type: "income",
+      category: "rent",
+      propertyId: "p1",
+      amount: "850",
+      rent: "800",
+      charges: "50",
+      frequency: "monthly",
+      startDate: "2026-01-31",
+      endDate: "",
+      active: true,
+      ...overrides,
+    },
+    state,
+  );
+  assert.deepEqual(result.errors, {});
+  return result.value;
+}
+test("les échéances mensuelles gardent le jour d’origine après février", () => {
+  assert.deepEqual(recurrenceDates(rule(), "2026-01-01", "2026-04-30"), [
+    "2026-01-31",
+    "2026-02-28",
+    "2026-03-31",
+    "2026-04-30",
+  ]);
+  assert.equal(monthEnd("2024-02-10"), "2024-02-29");
+  assert.deepEqual(
+    recurrenceDates(
+      rule({ startDate: "2024-02-29", frequency: "yearly" }),
+      "2024-01-01",
+      "2028-12-31",
+    ),
+    ["2024-02-29", "2025-02-28", "2026-02-28", "2027-02-28", "2028-02-29"],
+  );
+  assert.deepEqual(
+    recurrenceDates(
+      rule({ frequency: "quarterly" }),
+      "2026-02-01",
+      "2026-12-31",
+    ),
+    ["2026-04-30", "2026-07-31", "2026-10-31"],
+  );
+});
+test("les dates de début et fin et les règles invalides sont contrôlées", () => {
+  assert.deepEqual(
+    recurrenceDates(
+      rule({ startDate: "2026-01-05", endDate: "2026-03-05" }),
+      "2026-01-01",
+      "2026-12-31",
+    ),
+    ["2026-01-05", "2026-02-05", "2026-03-05"],
+  );
+  const invalid = validateRecurrence(
+    {
+      type: "expense",
+      category: "rent",
+      amount: "0",
+      frequency: "weekly",
+      startDate: "2026-02-31",
+      endDate: "2025-01-01",
+    },
+    fixture(),
+  );
+  for (const field of [
+    "amount",
+    "category",
+    "frequency",
+    "startDate",
+    "endDate",
+  ])
+    assert.ok(invalid.errors[field]);
+});
+test("la génération est idempotente et ne recrée pas une échéance supprimée", () => {
+  const s = fixture();
+  s.recurrences = [rule()];
+  assert.equal(generateRecurringTransactions(s, "2026-03-31"), 3);
+  assert.equal(s.transactions.length, 3);
+  assert.ok(
+    s.transactions.every(
+      (t) => t.status === "pending" && getPayments(t).length === 0,
+    ),
+  );
+  assert.equal(generateRecurringTransactions(s, "2026-03-31"), 0);
+  s.transactions.splice(1, 1);
+  assert.equal(generateRecurringTransactions(s, "2026-03-31"), 0);
+  assert.equal(generateRecurringTransactions(s, "2026-04-30"), 1);
+  assert.deepEqual(
+    s.transactions.map((t) => t.date),
+    ["2026-01-31", "2026-03-31", "2026-04-30"],
+  );
+});
+test("modifier une règle conserve les opérations générées et pause/reprise ne rattrape pas les mois suspendus", () => {
+  const s = fixture();
+  s.recurrences = [rule({ startDate: "2026-01-05" })];
+  generateRecurringTransactions(s, "2026-01-31");
+  const first = structuredClone(s.transactions[0]);
+  s.recurrences[0].amountCents = 90000;
+  s.recurrences[0].rentCents = 85000;
+  setRecurrenceActive(s.recurrences[0], false, "2026-02-01");
+  assert.equal(generateRecurringTransactions(s, "2026-03-31"), 0);
+  setRecurrenceActive(s.recurrences[0], true, "2026-04-10");
+  assert.equal(generateRecurringTransactions(s, "2026-04-30"), 0);
+  assert.equal(generateRecurringTransactions(s, "2026-05-31"), 1);
+  assert.deepEqual(s.transactions[0], first);
+  assert.equal(s.transactions[1].amountCents, 90000);
+  assert.equal(
+    nextRecurrenceDate(s.recurrences[0], "2026-06-01"),
+    "2026-06-05",
+  );
+});
+test("les anciennes sauvegardes sans récurrences ni règlements conservent leurs libellés et montants", () => {
+  const old = fixture();
+  delete old.recurrences;
+  old.transactions = [
+    tx({ label: "Ancien libellé" }),
+    tx({ id: "pending", status: "pending" }),
+  ];
+  const restored = parseBackup(serializeBackup(old));
+  assert.deepEqual(restored.recurrences, []);
+  assert.equal(restored.transactions[0].label, "Ancien libellé");
+  assert.equal(paidCents(restored.transactions[0]), 10010);
+  assert.equal(remainingCents(restored.transactions[1]), 10010);
+});
+test("un libellé normalisé rassemble le type, le nom court, la catégorie, la période et le détail", () => {
+  const s = fixture();
+  const result = validateTransaction(
+    {
+      type: "income",
+      category: "rent",
+      propertyId: "p1",
+      date: "2026-11-05",
+      period: "2026-11",
+      normalizedLabel: true,
+      detail: "Lot A",
+      amount: "850",
+      rent: "800",
+      charges: "50",
+      status: "pending",
+    },
+    s,
+  );
+  assert.deepEqual(result.errors, {});
+  assert.equal(
+    result.value.label,
+    "Encaissement · Appartement Érable · Loyer et provisions · novembre 2026 · Lot A",
+  );
+  s.transactions = [result.value];
+  assert.equal(filterTransactions(s, { query: "novembre erable" }).length, 0);
+  assert.equal(
+    filterTransactions(s, { query: "loyer et provisions" }).length,
+    1,
+  );
+  assert.equal(
+    transactionLabel(tx({ label: "Libellé libre" }), s),
+    "Libellé libre",
+  );
+  assert.ok(
+    validateProperty(
+      {
+        ...property,
+        name: "appartement erable",
+        rent: "800",
+        charges: "50",
+        id: "another",
+      },
+      s,
+    ).errors.name,
+  );
+});
+test("un règlement partiel ventile les centimes exactement et le solde conserve chaque date effective", () => {
+  const s = fixture();
+  s.transactions = [
+    tx({
+      date: "2025-12-05",
+      dueDate: "2025-12-05",
+      category: "rent",
+      amountCents: 85000,
+      rentCents: 80000,
+      chargesCents: 5000,
+      status: "pending",
+      payments: [],
+    }),
+  ];
+  recordPayment(s, "t1", { date: "2025-12-20", amount: "425" });
+  assert.equal(paidCents(s.transactions[0]), 42500);
+  assert.equal(remainingCents(s.transactions[0]), 42500);
+  assert.equal(transactionStatus(s.transactions[0], "2026-01-10"), "partial");
+  assert.deepEqual(
+    s.transactions[0].payments.map((p) => [p.rentCents, p.chargesCents]),
+    [[40000, 2500]],
+  );
+  recordPayment(s, "t1", { date: "2026-01-10", amount: "425" });
+  assert.equal(transactionStatus(s.transactions[0]), "paid");
+  assert.equal(
+    getSummary(s, { year: 2025, today: "2026-02-01" }).income,
+    42500,
+  );
+  assert.equal(
+    getSummary(s, { year: 2026, today: "2026-02-01" }).income,
+    42500,
+  );
+  assert.equal(getSummary(s, { year: 2026, today: "2026-02-01" }).rent, 40000);
+  assert.equal(
+    parseBackup(serializeBackup(s)).transactions[0].payments.length,
+    2,
+  );
+});
+test("la ventilation proportionnelle des petits règlements ne crée ni ne perd un centime", () => {
+  const s = fixture();
+  s.transactions = [
+    tx({
+      amountCents: 7,
+      rentCents: 5,
+      chargesCents: 2,
+      status: "pending",
+      payments: [],
+    }),
+  ];
+  for (let i = 0; i < 7; i++)
+    recordPayment(s, "t1", { date: "2026-03-01", amount: "0,01" });
+  assert.equal(paidCents(s.transactions[0]), 7);
+  assert.equal(
+    s.transactions[0].payments.reduce((n, p) => n + p.rentCents, 0),
+    5,
+  );
+  assert.equal(
+    s.transactions[0].payments.reduce((n, p) => n + p.chargesCents, 0),
+    2,
+  );
+});
+test("la ventilation manuelle est contrôlée et un règlement excessif ne modifie rien", () => {
+  const s = fixture();
+  s.transactions = [
+    tx({
+      amountCents: 85000,
+      rentCents: 80000,
+      chargesCents: 5000,
+      status: "pending",
+      payments: [],
+    }),
+  ];
+  recordPayment(s, "t1", {
+    date: "2026-03-01",
+    amount: "100",
+    rentAmount: "95",
+    chargesAmount: "5",
+  });
+  const before = serializeBackup(s);
+  assert.throws(() =>
+    recordPayment(s, "t1", { date: "2026-03-01", amount: "800" }),
+  );
+  assert.throws(() =>
+    recordPayment(s, "t1", {
+      date: "2026-03-01",
+      amount: "100",
+      rentAmount: "20",
+      chargesAmount: "80",
+    }),
+  );
+  assert.throws(() =>
+    recordPayment(s, "t1", { date: "2026-02-31", amount: "1" }),
+  );
+  // Ignore the export timestamp: all financial state must remain unchanged.
+  assert.deepEqual(parseBackup(serializeBackup(s)), parseBackup(before));
+  const invalid = structuredClone(s);
+  invalid.transactions[0].payments[0].chargesCents = 1;
+  assert.throws(() => parseBackup(invalid));
+});
+test("un pointage groupé est atomique et ne repointe pas une opération réglée", () => {
+  const s = fixture();
+  s.transactions = [
+    tx({ status: "pending" }),
+    tx({ id: "t2", status: "pending", type: "expense", category: "insurance" }),
+  ];
+  const before = structuredClone(s);
+  assert.throws(() => recordPaymentsBatch(s, ["t1", "absent"], "2026-03-15"));
+  assert.deepEqual(s, before);
+  assert.equal(recordPaymentsBatch(s, ["t1", "t2"], "2026-03-15"), 2);
+  assert.equal(
+    getSummary(s, { year: 2026, today: "2026-04-01" }).income,
+    10010,
+  );
+  assert.equal(
+    getSummary(s, { year: 2026, today: "2026-04-01" }).expense,
+    10010,
+  );
+  assert.throws(() => recordPaymentsBatch(s, ["t1"], "2026-03-15"));
+});
+test("les imports refusent les paiements supérieurs à l’échéance et les occurrences dupliquées", () => {
+  const s = fixture();
+  s.recurrences = [rule()];
+  generateRecurringTransactions(s, "2026-01-31");
+  const duplicate = structuredClone(s);
+  duplicate.transactions.push({
+    ...duplicate.transactions[0],
+    id: "another-id",
+  });
+  assert.throws(() => parseBackup(duplicate));
+  const overpaid = structuredClone(s);
+  overpaid.transactions[0].payments = [
+    {
+      id: "p",
+      date: "2026-01-31",
+      amountCents: 90000,
+      rentCents: 85000,
+      chargesCents: 5000,
+    },
+  ];
+  assert.throws(() => parseBackup(overpaid));
+});
+test("le prévisionnel distingue les retards, les règlements réels et les échéances futures sans doublons", () => {
+  const s = fixture();
+  s.recurrences = [rule({ startDate: "2026-01-05", endDate: "2026-04-05" })];
+  generateRecurringTransactions(s, "2026-02-28");
+  recordPayment(s, s.transactions[0].id, { date: "2026-01-05", amount: "850" });
+  const r = getForecast(s, { today: "2026-02-10", months: 3 });
+  assert.equal(r.openingBalance, 185000);
+  assert.equal(r.overdueIncome, 85000);
+  assert.equal(r.months[0].income, 0);
+  assert.equal(r.months[1].income, 85000);
+  assert.equal(r.months[2].income, 85000);
+  assert.equal(r.months[2].balance, 355000);
+  s.transactions.splice(1, 1);
+  const afterDelete = getForecast(s, { today: "2026-02-10", months: 3 });
+  assert.equal(afterDelete.months[0].income, 0);
+  assert.equal(afterDelete.overdueIncome, 0);
+});
+test("un règlement futur est projeté sans être inclus dans le solde réel", () => {
+  const s = fixture();
+  s.transactions = [
+    tx({
+      date: "2026-03-01",
+      amountCents: 10000,
+      status: "pending",
+      payments: [
+        {
+          id: "future",
+          date: "2026-05-01",
+          amountCents: 4000,
+          rentCents: 4000,
+          chargesCents: 0,
+        },
+      ],
+    }),
+  ];
+  const forecast = getForecast(s, { today: "2026-04-01", months: 2 });
+  assert.equal(forecast.openingBalance, 100000);
+  assert.equal(forecast.overdueIncome, 6000);
+  assert.equal(forecast.months[1].income, 4000);
+  assert.equal(forecast.months[1].balance, 104000);
+});
+test("une dépense périodique sans ventilation locative reste sauvegardable", () => {
+  const s = fixture();
+  s.recurrences = [
+    rule({
+      type: "expense",
+      category: "insurance",
+      amount: "85",
+      rent: undefined,
+      charges: undefined,
+    }),
+  ];
+  generateRecurringTransactions(s, "2026-03-31");
+  assert.equal(s.transactions.length, 3);
+  assert.equal(s.transactions[0].rentCents, 0);
+  assert.deepEqual(parseBackup(serializeBackup(s)), s);
+});
+test("la ventilation proposée reste exacte même près de la limite des montants", () => {
+  const t = tx({
+    amountCents: 100000000000,
+    rentCents: 99999999999,
+    chargesCents: 1,
+    status: "pending",
+    payments: [],
+  });
+  assert.deepEqual(suggestedAllocation(t, 100000000000), {
+    rentCents: 99999999999,
+    chargesCents: 1,
+  });
+  assert.deepEqual(suggestedAllocation(t, 0), {
+    rentCents: 0,
+    chargesCents: 0,
+  });
+  assert.throws(() => suggestedAllocation(t, 100000000001));
+});
+test("une périodicité commençant au-delà de deux ans a bien une prochaine échéance", () => {
+  assert.equal(
+    nextRecurrenceDate(rule({ startDate: "2035-08-31" }), "2026-01-01"),
+    "2035-08-31",
+  );
+});
+test("le journal retrouve les règlements tardifs et le CSV annuel garde leur exercice réel", () => {
+  const s = fixture();
+  s.transactions = [
+    tx({
+      date: "2026-12-05",
+      dueDate: "2026-12-05",
+      amountCents: 85000,
+      rentCents: 80000,
+      chargesCents: 5000,
+      status: "pending",
+      payments: [],
+    }),
+  ];
+  recordPayment(s, "t1", { date: "2027-01-10", amount: "850" });
+  assert.equal(filterTransactions(s, { year: 2026 }).length, 1);
+  assert.equal(filterTransactions(s, { year: 2027 }).length, 1);
+  const csv2026 = exportCSV(s, filterTransactions(s, { year: 2026 }), {
+    year: 2026,
+  });
+  const csv2027 = exportCSV(s, filterTransactions(s, { year: 2027 }), {
+    year: 2027,
+  });
+  assert.equal(csv2026.split("\r\n").length, 1);
+  assert.ok(!csv2026.includes("2027-01-10"));
+  assert.ok(csv2027.includes('"2027-01-10"'));
+  assert.ok(csv2027.includes('"850,00"'));
+  assert.ok(exportCSV(s, s.transactions).includes("2027-01-10"));
+});
+test("un export annuel sépare les règlements partiels des années voisines et conserve le reste dû sans le compter en trésorerie", () => {
+  const s = fixture();
+  s.transactions = [
+    tx({
+      date: "2026-12-05",
+      amountCents: 85000,
+      rentCents: 80000,
+      chargesCents: 5000,
+      status: "pending",
+      payments: [],
+    }),
+  ];
+  recordPayment(s, "t1", { date: "2026-12-20", amount: "200" });
+  recordPayment(s, "t1", { date: "2027-01-10", amount: "300" });
+  const csv2026 = exportCSV(s, filterTransactions(s, { year: 2026 }), {
+    year: 2026,
+  });
+  const csv2027 = exportCSV(s, filterTransactions(s, { year: 2027 }), {
+    year: 2027,
+  });
+  assert.ok(csv2026.includes("2026-12-20"));
+  assert.ok(!csv2026.includes("2027-01-10"));
+  assert.ok(csv2027.includes("2027-01-10"));
+  assert.ok(!csv2027.includes("2026-12-20"));
+  const rows = csv2026
+    .split("\r\n")
+    .slice(1)
+    .map((line) =>
+      [...line.matchAll(/"((?:[^"]|"")*)"/g)].map((match) =>
+        match[1].replace(/""/g, '"'),
+      ),
+    );
+  assert.equal(rows.length, 2); // One actual 2026 receipt and one outstanding-due row.
+  assert.equal(
+    rows.reduce((n, row) => n + parseMoney(row[7] || "0"), 0),
+    20000,
+  );
+  assert.equal(
+    rows.reduce((n, row) => n + parseMoney(row[15] || "0"), 0),
+    35000,
+  );
+  assert.equal(
+    getSummary(s, { year: 2026, today: "2027-02-01" }).pendingIncome,
+    35000,
+  );
+  assert.equal(
+    getSummary(s, { year: 2027, today: "2027-02-01" }).pendingIncome,
+    0,
+  );
 });
