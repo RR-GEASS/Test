@@ -2,6 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createApp } from "../server/app.js";
+import { DatabaseSync } from "node:sqlite";
+import express from "express";
+import {
+  installAttachments,
+  synchronizeAttachmentNames,
+} from "../server/attachments.js";
+import { createEmptyState } from "../src/model.js";
 
 const PDF = Buffer.from("%PDF-1.7\n1 0 obj<</Type/Catalog>>endobj\n%%EOF\n");
 const PNG = Buffer.from(
@@ -113,7 +120,8 @@ test("un justificatif PDF est listé, téléchargé sans exposition inline et su
     const added = await upload(h, owner, t.id, "Facture chaudière été.pdf");
     assert.equal(added.status, 201);
     const a = added.data.attachment;
-    assert.equal(a.name, "Facture chaudière été.pdf");
+    assert.equal(a.name, "Entretien à justifier.pdf");
+    assert.equal(a.originalName, "Facture chaudière été.pdf");
     assert.equal(a.mime, "application/pdf");
     assert.equal(a.size, PDF.length);
     assert.ok(a.createdAt);
@@ -135,9 +143,7 @@ test("un justificatif PDF est listé, téléchargé sans exposition inline et su
     assert.ok(
       fetched.headers
         .get("content-disposition")
-        .includes(
-          "filename*=UTF-8''Facture%20chaudi%C3%A8re%20%C3%A9t%C3%A9.pdf",
-        ),
+        .includes("filename*=UTF-8''Entretien%20%C3%A0%20justifier.pdf"),
     );
     const removed = await h.request(`/api/attachments/${a.id}`, {
       cookie: owner.cookie,
@@ -436,5 +442,151 @@ test("les mutations des documents appliquent aussi les contrôles d’origine", 
     );
   } finally {
     await h.close();
+  }
+});
+
+test("les noms suivent le libellé courant, distinguent les fichiers et conservent les noms originaux", async () => {
+  const h = await harness();
+  try {
+    const owner = await account(h);
+    const t = await operation(h, owner);
+    const first = await upload(h, owner, t.id, "scan_original.PDF");
+    const second = await upload(h, owner, t.id, "autre.pdf");
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+    let list = (
+      await h.request(`/api/transactions/${t.id}/attachments`, {
+        cookie: owner.cookie,
+      })
+    ).data.attachments;
+    assert.equal(new Set(list.map((a) => a.name.toLowerCase())).size, 2);
+    assert.deepEqual(
+      list.map((a) => a.name),
+      ["Entretien à justifier.PDF", "Entretien à justifier (2).pdf"],
+    );
+    assert.deepEqual(
+      list.map((a) => a.originalName),
+      ["scan_original.PDF", "autre.pdf"],
+    );
+    t.label = "Décaissement · SCI / Général · Assurances · novembre 2026";
+    await save(h, owner);
+    const downloaded = await h.request(
+      `/api/attachments/${first.data.attachment.id}`,
+      { cookie: owner.cookie },
+    );
+    assert.equal(downloaded.status, 200);
+    assert.deepEqual(downloaded.bytes, PDF);
+    assert.ok(
+      downloaded.headers
+        .get("content-disposition")
+        .includes("SCI%20-%20G%C3%A9n%C3%A9ral"),
+    );
+    list = (
+      await h.request(`/api/transactions/${t.id}/attachments`, {
+        cookie: owner.cookie,
+      })
+    ).data.attachments;
+    assert.equal(
+      list[0].name,
+      "Décaissement · SCI - Général · Assurances · novembre 2026.PDF",
+    );
+    assert.equal(
+      list[1].name,
+      "Décaissement · SCI - Général · Assurances · novembre 2026 (2).pdf",
+    );
+    assert.equal(list[0].originalName, "scan_original.PDF");
+  } finally {
+    await h.close();
+  }
+});
+
+test("la migration de l’ancien schéma et le renommage sont idempotents sans toucher aux fichiers ni aux autres comptes", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec(`CREATE TABLE users(id TEXT PRIMARY KEY,state TEXT NOT NULL);
+    CREATE TABLE attachments(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),transaction_id TEXT NOT NULL,name TEXT NOT NULL,mime TEXT NOT NULL,size_bytes INTEGER NOT NULL,created_at TEXT NOT NULL,data BLOB NOT NULL);`);
+    const state = createEmptyState();
+    state.transactions = [
+      {
+        id: "t",
+        label: "Loyer · Novembre",
+        date: "2026-11-01",
+        dueDate: "",
+        amountCents: 85000,
+        type: "income",
+        category: "rent",
+        propertyId: "",
+        status: "pending",
+        counterparty: "",
+        reference: "",
+        notes: "",
+      },
+    ];
+    db.prepare("INSERT INTO users(id,state) VALUES(?,?)").run(
+      "owner",
+      JSON.stringify(state),
+    );
+    db.prepare("INSERT INTO users(id,state) VALUES(?,?)").run(
+      "other",
+      JSON.stringify(state),
+    );
+    const insert = db.prepare(
+      "INSERT INTO attachments(id,user_id,transaction_id,name,mime,size_bytes,created_at,data) VALUES(?,?,?,?,?,?,?,?)",
+    );
+    insert.run(
+      "a",
+      "owner",
+      "t",
+      "ancienne facture.pdf",
+      "application/pdf",
+      PDF.length,
+      "2026-11-01T00:00:00.000Z",
+      PDF,
+    );
+    insert.run(
+      "orphan",
+      "owner",
+      "absent",
+      "orphelin.pdf",
+      "application/pdf",
+      PDF.length,
+      "2026-11-01T00:00:00.000Z",
+      PDF,
+    );
+    insert.run(
+      "other-a",
+      "other",
+      "t",
+      "autre compte.pdf",
+      "application/pdf",
+      PDF.length,
+      "2026-11-01T00:00:00.000Z",
+      PDF,
+    );
+    installAttachments(express(), db, (_req, _res, next) => next());
+    installAttachments(express(), db, (_req, _res, next) => next());
+    assert.equal(
+      db
+        .prepare("PRAGMA table_info(attachments)")
+        .all()
+        .filter((c) => c.name === "original_name").length,
+      1,
+    );
+    synchronizeAttachmentNames(db, "owner");
+    assert.equal(synchronizeAttachmentNames(db, "owner"), 0);
+    const a = db.prepare("SELECT * FROM attachments WHERE id=?").get("a");
+    assert.equal(a.name, "Loyer · Novembre.pdf");
+    assert.equal(a.original_name, "ancienne facture.pdf");
+    assert.deepEqual(Buffer.from(a.data), PDF);
+    assert.equal(
+      db.prepare("SELECT name FROM attachments WHERE id=?").get("orphan").name,
+      "orphelin.pdf",
+    );
+    assert.equal(
+      db.prepare("SELECT name FROM attachments WHERE id=?").get("other-a").name,
+      "autre compte.pdf",
+    );
+  } finally {
+    db.close();
   }
 });

@@ -1,8 +1,10 @@
-# Atelier SCI
+# Cap SCI
+
+Cap SCI est le nouveau nom d’Atelier SCI. Le changement de nom et de couleurs conserve vos comptes, données, réglages et anciennes sauvegardes.
 
 Un site en français pour suivre les biens, les loyers et la trésorerie d’une **SCI à l’IS**, avec un compte personnel et des données conservées dans une base SQLite côté serveur.
 
-![Aperçu du tableau de bord Atelier SCI, avec des données fictives](docs/apercu.png)
+![Aperçu du tableau de bord Cap SCI, avec des données fictives](docs/apercu.png)
 
 ## Essayer sous Windows
 
@@ -55,7 +57,9 @@ Pour un **prêt**, distinguez capital, intérêts et assurance si vous disposez 
 
 Dans le menu d’une opération ou depuis le pointage, ouvrez **Justificatifs** pour ajouter et télécharger des PDF, JPEG ou PNG. Limites : **5 Mo par fichier, 20 fichiers par opération, 50 Mo par compte**. L’accès nécessite le compte propriétaire. Les fichiers sont stockés dans la base SQLite, sans être publiés dans les fichiers du site.
 
-**L’export JSON contient les opérations, les périodicités et les règlements, mais pas les fichiers justificatifs.** Téléchargez-les séparément ou sauvegardez toute la base serveur avec le script fourni. Lorsqu’une opération est supprimée/remplacée par un import, ses anciens fichiers restent conservés dans la base mais ne sont plus accessibles tant que l’opération correspondante n’est pas restaurée ; cette rétention compte dans le quota.
+À l’enregistrement, le document est automatiquement nommé d’après le **libellé de l’opération**. Son extension est conservée et un numéro distingue plusieurs pièces (`… (2).pdf`). Les caractères interdits dans les noms Windows sont remplacés et les libellés très longs sont raccourcis pour le nom du fichier. Le libellé complet reste dans le dossier comptable. Le nom original est conservé comme référence ; les octets du fichier ne sont pas modifiés. Les pièces existantes sont également mises au même format, et un changement de libellé actualise leurs noms.
+
+**L’export JSON contient les opérations, les périodicités et les règlements, mais pas les fichiers justificatifs.** Utilisez le dossier comptable ZIP pour transmettre les pièces sélectionnées, téléchargez-les séparément ou sauvegardez toute la base serveur avec le script fourni. Lorsqu’une opération est supprimée/remplacée par un import, ses anciens fichiers restent conservés dans la base mais ne sont plus accessibles tant que l’opération correspondante n’est pas restaurée ; cette rétention compte dans le quota.
 
 ## Mettre à jour sans perdre votre SCI sous Windows
 
@@ -69,6 +73,35 @@ Dans le menu d’une opération ou depuis le pointage, ouvrez **Justificatifs** 
 Les calculs utilisent des **centimes entiers**. La trésorerie globale correspond au solde initial plus les encaissements réglés moins les décaissements réglés, de la date initiale jusqu’à la date d’arrêté. La date d’arrêté est aujourd’hui pour l’exercice courant, ou le 31 décembre pour un exercice passé. Pour un bien isolé, l’indicateur affiche le solde de ses mouvements de l’année : le solde bancaire initial n’est pas réparti arbitrairement entre les biens.
 
 L’application prépare un **suivi de trésorerie à partager avec le comptable**. Elle ne produit pas la comptabilité en partie double, les amortissements, la TVA, le bilan, le résultat fiscal à l’IS, les déclarations ou un FEC. Un remboursement de capital ou une restitution de dépôt reste un mouvement de trésorerie, sans être présenté comme une charge fiscale déductible.
+
+## Préparer le dossier du comptable
+
+Ouvrez **Export comptable** dans le menu. Cet écran permet de choisir précisément ce qui sera transmis :
+
+1. Indiquez **Du / Au** : les deux dates sont incluses. Les raccourcis permettent de choisir l’année en cours, l’année précédente ou le mois courant.
+2. Choisissez **Dates à utiliser** :
+   - **Règlements réels** : seules les opérations ayant un règlement dans la plage sont retenues. Par défaut, seuls ces règlements sont détaillés dans le dossier.
+   - **Échéances des opérations** : les opérations sont retenues selon leur échéance. Cela permet notamment de transmettre les sommes non encore réglées ; tous leurs règlements liés sont fournis, avec leur position dans/hors plage.
+   - **Période concernée (mois)** : les mois de début et de fin sont inclus entièrement, même si le jour choisi n’est pas le premier/dernier du mois. Les règlements liés restent distincts de la période de loyer.
+3. Filtrez les types, statuts, biens et catégories, ou recherchez un libellé, un tiers ou une référence. Aucune case cochée dans un groupe de filtres signifie « tous ».
+4. Dans l’aperçu, décochez les opérations à ne pas transmettre. **Tout inclure** permet de sélectionner/désélectionner l’ensemble. Modifier un filtre réinitialise cette sélection ; les compteurs et totaux sont actualisés avant téléchargement.
+5. Laissez **Inclure les justificatifs** coché pour joindre les documents des opérations retenues. L’option **Inclure tous les règlements liés**, en mode règlements réels, ajoute volontairement leur historique hors dates. Ces règlements sont repérés et ne gonflent pas les totaux de la plage.
+6. Téléchargez le **dossier ZIP**. Le compte doit être connecté et les modifications enregistrées. En démonstration, un CSV des opérations permet d’essayer les filtres.
+
+Le ZIP comprend :
+
+- `operations.csv` : libellés, dates, périodes, biens, locataires, catégories, montants attendus, ventilation loyer/provisions, totaux réglés historiques, restes dus, règlements de la plage, références et notes.
+- `reglements.csv` : un règlement par ligne avec sa date réelle, son montant, sa ventilation, l’opération liée et l’indicateur dans/hors plage.
+- `biens.csv` et `parametres-sci.json` : informations des biens concernés, paramètres de la SCI et critères de sélection.
+- `justifs/` : les véritables fichiers demandés, dans des dossiers courts par opération pour faciliter l’extraction sous Windows.
+- `manifest.json` : l’index reliant opérations et documents, noms d’origine et noms normalisés, critères, date d’export et version des données source.
+- `selection.json` et `README.txt` : une extraction lisible de la sélection et les explications pour son exploitation. L’historique individuel non demandé n’est pas ajouté silencieusement.
+
+Les CSV sont en UTF-8 avec séparateur point-virgule, lisibles dans Excel. Le total réglé historique d’une opération et son montant attendu ne sont pas des encaissements supplémentaires : les mouvements réels figurent dans `reglements.csv`, et les totaux de plage n’incluent que les paiements de la plage.
+
+**Ce ZIP est un dossier comptable sélectionné, pas une sauvegarde complète restaurable ni un FEC.** Il ne contient ni mots de passe ni sessions. Gardez votre sauvegarde JSON/base complète pour restaurer l’application.
+
+![Cap SCI : sélection et dossier comptable](docs/export-comptable.png)
 
 ## Accéder depuis plusieurs appareils
 
@@ -118,7 +151,7 @@ npm.cmd run build
 npm.cmd run test:e2e
 ```
 
-Les tests du modèle et de l’API vérifient les centimes, dates, soldes, imports, exports, isolation des comptes, sessions, conflits et redémarrage SQLite. Les tests Playwright exercent le site et la connexion de deux navigateurs distincts. Sous Windows, si Chromium n’est pas installé pour Playwright :
+Les tests du modèle et de l’API vérifient les centimes, dates, soldes, imports, exports ZIP/CSV et leurs plages exactes, renommage et migration des pièces, isolation des comptes, sessions, conflits et redémarrage SQLite. Les tests Playwright exercent le site et la connexion de deux navigateurs distincts. Sous Windows, si Chromium n’est pas installé pour Playwright :
 
 ```powershell
 npx.cmd playwright install chromium
@@ -133,6 +166,8 @@ Sur Linux, les tests utilisent `/usr/bin/chromium` lorsqu’il existe. `CHROMIUM
 - `src/app.js`, `src/finance-ui.js`, `src/style.css` : interface, périodicités, pointage et prévisions.
 - `src/model.js` : règles financières, validation, exports.
 - `src/api.js` : échanges avec le serveur.
+- `src/export-ui.js`, `src/accountant-export.js`, `server/exports.js` : sélection et dossier comptable ZIP.
+- `src/document-names.js`, `server/attachments.js` : noms de pièces, migration et accès privé aux documents.
 - `server/` : comptes, sessions, SQLite, justificatifs privés et serveur de production.
 - `scripts/dev.mjs` : démarrage sous Windows et Linux.
 - `scripts/backup.mjs` : sauvegarde cohérente de SQLite.

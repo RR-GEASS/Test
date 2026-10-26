@@ -1,5 +1,5 @@
 {
-  "name": "atelier-sci",
+  "name": "cap-sci",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -8,13 +8,14 @@
     "dev": "node scripts/dev.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test tests/model.test.js tests/server.test.js tests/attachments.test.js",
+    "test": "node --test tests/model.test.js tests/server.test.js tests/attachments.test.js tests/document-names.test.js tests/accountant-export.test.js tests/exports.test.js",
     "test:e2e": "playwright test",
     "start": "node server/index.js"
   },
   "dependencies": {
     "@fontsource/dm-sans": "5.2.8",
     "@fontsource/manrope": "5.2.8",
+    "archiver": "8.0.0",
     "express": "5.3.0",
     "express-rate-limit": "8.7.1",
     "helmet": "8.3.0"

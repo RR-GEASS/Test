@@ -384,7 +384,7 @@ export function createFinanceUI(ctx) {
       return;
     }
     const d = mountDialog(
-      `<dialog class="form-dialog" aria-labelledby="dialog-title">${formHeader("Justificatifs", transactionLabel(t, getState()), "folder")}<div id="attachment-list">Chargement…</div><div class="form-field"><label for="attachment-file">Ajouter un justificatif</label><input id="attachment-file" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png"></div><p class="form-note">PDF, JPEG ou PNG · 5 Mo maximum par fichier · 20 fichiers par opération. Les pièces sont conservées côté serveur. L’export JSON de la SCI ne contient pas leurs fichiers : téléchargez-les ou sauvegardez la base serveur.</p><p class="finance-error" role="alert"></p><div class="dialog-footer"><button class="button secondary" data-close>Fermer</button></div></dialog>`,
+      `<dialog class="form-dialog" aria-labelledby="dialog-title">${formHeader("Justificatifs", transactionLabel(t, getState()), "folder")}<div id="attachment-list">Chargement…</div><div class="form-field"><label for="attachment-file">Ajouter un justificatif</label><input id="attachment-file" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png"></div><p class="form-note">PDF, JPEG ou PNG · 5 Mo maximum par fichier · 20 fichiers par opération. Les pièces sont renommées selon le libellé de l’opération (extension conservée, numérotation si nécessaire). Leur nom original est gardé comme référence. Les pièces sont conservées côté serveur. L’export JSON de la SCI ne contient pas leurs fichiers : téléchargez-les ou sauvegardez la base serveur.</p><p class="finance-error" role="alert"></p><div class="dialog-footer"><button class="button secondary" data-close>Fermer</button></div></dialog>`,
     );
     async function list() {
       const res = await fetch(
@@ -393,7 +393,7 @@ export function createFinanceUI(ctx) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Chargement impossible.");
       d.querySelector("#attachment-list").innerHTML =
-        `<ul class="payment-list">${data.attachments.map((a) => `<li><span><a href="/api/attachments/${encodeURIComponent(a.id)}" download>${esc(a.name)}</a><small>${Math.ceil(a.size / 1024)} Ko · ${shortDate(a.createdAt.slice(0, 10))}</small></span><button class="text-link danger-text" data-remove-file="${esc(a.id)}">Supprimer</button></li>`).join("") || "<li>Aucun justificatif pour cette opération.</li>"}</ul>`;
+        `<ul class="payment-list">${data.attachments.map((a) => `<li><span><a href="/api/attachments/${encodeURIComponent(a.id)}" download>${esc(a.name)}</a><small>${Math.ceil(a.size / 1024)} Ko · ${shortDate(a.createdAt.slice(0, 10))}${a.originalName ? ` · Original : ${esc(a.originalName)}` : ""}</small></span><button class="text-link danger-text" data-remove-file="${esc(a.id)}">Supprimer</button></li>`).join("") || "<li>Aucun justificatif pour cette opération.</li>"}</ul>`;
       d.querySelectorAll("[data-remove-file]").forEach((b) =>
         b.addEventListener("click", async () => {
           if (!confirm("Supprimer définitivement ce justificatif ?")) return;

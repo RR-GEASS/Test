@@ -588,7 +588,7 @@ export function parseBackup(raw) {
     !Array.isArray(data.transactions) ||
     !data.settings
   )
-    fail("Le format de cette sauvegarde Atelier SCI n’est pas reconnu.");
+    fail("Le format de cette sauvegarde Cap SCI n’est pas reconnu.");
   if (data.properties.length > 1000 || data.transactions.length > 20000)
     fail(
       "Cette sauvegarde dépasse la capacité de cette version (1 000 biens ou 20 000 opérations).",

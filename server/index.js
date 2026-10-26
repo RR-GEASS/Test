@@ -4,7 +4,7 @@ const { app, close } = createApp({
   production: process.env.NODE_ENV !== "development",
 });
 const server = app.listen(port, "0.0.0.0", () =>
-  console.log(`Atelier SCI : serveur actif sur le port ${port}`),
+  console.log(`Cap SCI : serveur actif sur le port ${port}`),
 );
 for (const signal of ["SIGINT", "SIGTERM"])
   process.on(signal, () =>

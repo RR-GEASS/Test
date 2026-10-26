@@ -1,5 +1,7 @@
 import express from "express";
 import { randomUUID } from "node:crypto";
+import { parseBackup, transactionLabel } from "../src/model.js";
+import { documentFileName } from "../src/document-names.js";
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_ACCOUNT_BYTES = 50 * 1024 * 1024;
@@ -62,6 +64,60 @@ function disposition(name) {
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
 
+/** Align names with the current operation label without modifying document bytes.
+ * Keeping the original name also preserves its actual extension for later renames.
+ */
+export function synchronizeAttachmentNames(db, userId, state) {
+  if (!state) {
+    const owner = db.prepare("SELECT state FROM users WHERE id=?").get(userId);
+    if (!owner) return 0;
+    try {
+      state = parseBackup(owner.state);
+    } catch {
+      return 0;
+    }
+  }
+  const operations = new Map(state.transactions.map((t) => [t.id, t]));
+  const rows = db
+    .prepare(
+      "SELECT id,transaction_id,name,original_name,mime,created_at FROM attachments WHERE user_id=? ORDER BY transaction_id,created_at,id",
+    )
+    .all(userId);
+  const update = db.prepare(
+    "UPDATE attachments SET name=?,original_name=? WHERE id=? AND user_id=?",
+  );
+  const sequences = new Map();
+  let changed = 0;
+  for (const row of rows) {
+    const originalName = row.original_name || row.name;
+    const operation = operations.get(row.transaction_id);
+    // Orphaned files stay intact so restoring an operation can restore access.
+    if (!operation) {
+      if (!row.original_name)
+        update.run(row.name, originalName, row.id, userId);
+      continue;
+    }
+    const sequence = (sequences.get(row.transaction_id) || 0) + 1;
+    sequences.set(row.transaction_id, sequence);
+    const extensionSource = /\.(pdf|jpe?g|png)$/iu.test(originalName)
+      ? originalName
+      : { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png" }[
+          row.mime
+        ];
+    if (!extensionSource) continue;
+    const name = documentFileName(
+      transactionLabel(operation, state),
+      extensionSource,
+      sequence,
+    );
+    if (name !== row.name || !row.original_name) {
+      update.run(name, originalName, row.id, userId);
+      changed++;
+    }
+  }
+  return changed;
+}
+
 /** Install authenticated supporting-document routes on the existing SCI API. */
 export function installAttachments(app, db, requireUser) {
   db.exec(`
@@ -70,6 +126,7 @@ export function installAttachments(app, db, requireUser) {
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       transaction_id TEXT NOT NULL,
       name TEXT NOT NULL,
+      original_name TEXT,
       mime TEXT NOT NULL,
       size_bytes INTEGER NOT NULL CHECK(size_bytes > 0 AND size_bytes <= 5242880),
       created_at TEXT NOT NULL,
@@ -77,6 +134,15 @@ export function installAttachments(app, db, requireUser) {
     );
     CREATE INDEX IF NOT EXISTS attachments_owner_transaction ON attachments(user_id, transaction_id);
   `);
+
+  if (
+    !db
+      .prepare("PRAGMA table_info(attachments)")
+      .all()
+      .some((column) => column.name === "original_name")
+  ) {
+    db.exec("ALTER TABLE attachments ADD COLUMN original_name TEXT");
+  }
 
   // Read the current database state rather than the authentication snapshot:
   // another request can remove an operation while an upload is still arriving.
@@ -122,6 +188,7 @@ export function installAttachments(app, db, requireUser) {
   const metadata = (row) => ({
     id: row.id,
     name: row.name,
+    originalName: row.original_name || row.name,
     mime: row.mime,
     size: row.size_bytes,
     createdAt: row.created_at,
@@ -132,9 +199,10 @@ export function installAttachments(app, db, requireUser) {
     requireUser,
     ownsTransaction,
     (req, res) => {
+      synchronizeAttachmentNames(db, req.user.id);
       const rows = db
         .prepare(
-          "SELECT id,name,mime,size_bytes,created_at FROM attachments WHERE user_id=? AND transaction_id=? ORDER BY created_at,id",
+          "SELECT id,name,original_name,mime,size_bytes,created_at FROM attachments WHERE user_id=? AND transaction_id=? ORDER BY created_at,id",
         )
         .all(req.user.id, req.params.transactionId);
       res.json({ attachments: rows.map(metadata) });
@@ -147,14 +215,14 @@ export function installAttachments(app, db, requireUser) {
     receiveFile,
     ownsTransaction,
     (req, res) => {
-      const name = decodeName(req.get("x-file-name"));
-      if (!name)
+      const originalName = decodeName(req.get("x-file-name"));
+      if (!originalName)
         return res.status(400).json({
           error:
             "Le nom du fichier est invalide (160 caractères maximum, sans chemin).",
         });
       const detected = detectDocument(req.body);
-      const extension = name.split(".").at(-1).toLowerCase();
+      const extension = originalName.split(".").at(-1).toLowerCase();
       if (!detected || !detected.extensions.includes(extension))
         return res.status(415).json({
           error:
@@ -178,30 +246,51 @@ export function installAttachments(app, db, requireUser) {
         return res.status(409).json({
           error: "L’espace de justificatifs de ce compte est limité à 50 Mo.",
         });
+      synchronizeAttachmentNames(db, req.user.id);
+      const ownerState = parseBackup(
+        db.prepare("SELECT state FROM users WHERE id=?").get(req.user.id).state,
+      );
+      const operation = ownerState.transactions.find(
+        (t) => t.id === req.params.transactionId,
+      );
+      const name = documentFileName(
+        transactionLabel(operation, ownerState),
+        originalName,
+        count + 1,
+      );
       const attachment = {
         id: randomUUID(),
         name,
+        originalName,
         mime: detected.mime,
         size: req.body.length,
         createdAt: new Date().toISOString(),
       };
       db.prepare(
-        "INSERT INTO attachments(id,user_id,transaction_id,name,mime,size_bytes,created_at,data) VALUES(?,?,?,?,?,?,?,?)",
+        "INSERT INTO attachments(id,user_id,transaction_id,name,original_name,mime,size_bytes,created_at,data) VALUES(?,?,?,?,?,?,?,?,?)",
       ).run(
         attachment.id,
         req.user.id,
         req.params.transactionId,
         name,
+        originalName,
         detected.mime,
         req.body.length,
         attachment.createdAt,
         req.body,
       );
-      res.status(201).json({ attachment });
+      synchronizeAttachmentNames(db, req.user.id, ownerState);
+      const inserted = db
+        .prepare(
+          "SELECT id,name,original_name,mime,size_bytes,created_at FROM attachments WHERE id=? AND user_id=?",
+        )
+        .get(attachment.id, req.user.id);
+      res.status(201).json({ attachment: metadata(inserted) });
     },
   );
 
   function findAttachment(req, res, next) {
+    synchronizeAttachmentNames(db, req.user.id);
     const row = db
       .prepare("SELECT * FROM attachments WHERE id=? AND user_id=?")
       .get(req.params.id, req.user.id);

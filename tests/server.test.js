@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
+import { DatabaseSync } from "node:sqlite";
 import { createApp } from "../server/app.js";
 const password = "a-long-test-password-2026";
 async function harness(dbPath = ":memory:", production = false) {
@@ -306,5 +307,76 @@ test("les échéances générées côté serveur persistent sans doublon ni réa
     );
   } finally {
     await h.close();
+  }
+});
+test("une erreur de renommage ne valide pas partiellement la modification d’une opération", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "capsci-atomic-"));
+  const path = join(dir, "db.sqlite");
+  const h = await harness(path);
+  let db;
+  try {
+    const a = await register(h);
+    a.data.state.transactions = [
+      {
+        id: "atomic-operation",
+        date: "2026-01-01",
+        dueDate: "",
+        type: "income",
+        status: "pending",
+        label: "Avant modification",
+        category: "other_income",
+        propertyId: "",
+        amountCents: 12345,
+        counterparty: "",
+        reference: "",
+        notes: "",
+      },
+    ];
+    const saved = await h.request("/api/state", {
+      method: "PUT",
+      cookie: a.cookie,
+      body: { accountId: a.data.user.id, revision: 0, state: a.data.state },
+    });
+    assert.equal(saved.status, 200);
+    const uploaded = await fetch(
+      h.base + "/api/transactions/atomic-operation/attachments",
+      {
+        method: "POST",
+        headers: {
+          Origin: h.base,
+          Cookie: a.cookie,
+          "Content-Type": "application/octet-stream",
+          "X-File-Name": "original.pdf",
+        },
+        body: Buffer.from("%PDF-1.4\nminimal\n%%EOF"),
+      },
+    );
+    assert.equal(uploaded.status, 201);
+    db = new DatabaseSync(path);
+    db.exec(
+      "CREATE TRIGGER reject_rename BEFORE UPDATE OF name ON attachments WHEN NEW.name<>OLD.name BEGIN SELECT RAISE(ABORT,'simulated rename failure'); END;",
+    );
+    saved.data.state.transactions[0].label = "Après modification";
+    const failed = await h.request("/api/state", {
+      method: "PUT",
+      cookie: a.cookie,
+      body: {
+        accountId: a.data.user.id,
+        revision: saved.data.revision,
+        state: saved.data.state,
+      },
+    });
+    assert.equal(failed.status, 500);
+    const actual = await h.request("/api/session", { cookie: a.cookie });
+    assert.equal(actual.data.revision, saved.data.revision);
+    assert.equal(actual.data.state.transactions[0].label, "Avant modification");
+    assert.equal(
+      db.prepare("SELECT name FROM attachments").get().name,
+      "Avant modification.pdf",
+    );
+  } finally {
+    db?.close();
+    await h.close();
+    rmSync(dir, { recursive: true, force: true });
   }
 });

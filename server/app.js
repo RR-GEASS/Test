@@ -15,7 +15,11 @@ import {
   monthEnd,
   todayISO,
 } from "../src/model.js";
-import { installAttachments } from "./attachments.js";
+import {
+  installAttachments,
+  synchronizeAttachmentNames,
+} from "./attachments.js";
+import { installExports } from "./exports.js";
 
 const derive = promisify(scrypt);
 const digest = (value) => createHash("sha256").update(value).digest("hex");
@@ -168,6 +172,7 @@ export function createApp({
     res.json(payload(req.user)),
   );
   installAttachments(app, db, requireUser);
+  installExports(app, db, requireUser);
   app.post("/api/register", async (req, res, next) => {
     try {
       const { email, password, name } = req.body || {};
@@ -282,17 +287,27 @@ export function createApp({
     } catch (error) {
       return res.status(400).json({ error: error.message });
     }
-    const result = db
-      .prepare(
-        "UPDATE users SET state=?,revision=revision+1 WHERE id=? AND revision=?",
-      )
-      .run(JSON.stringify(state), req.user.id, revision);
-    if (result.changes !== 1)
-      return res.status(409).json({
-        error:
-          "Votre SCI a été modifiée sur un autre appareil. Exportez vos modifications puis rechargez les données.",
-        code: "conflict",
-      });
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = db
+        .prepare(
+          "UPDATE users SET state=?,revision=revision+1 WHERE id=? AND revision=?",
+        )
+        .run(JSON.stringify(state), req.user.id, revision);
+      if (result.changes !== 1) {
+        db.exec("ROLLBACK");
+        return res.status(409).json({
+          error:
+            "Votre SCI a été modifiée sur un autre appareil. Exportez vos modifications puis rechargez les données.",
+          code: "conflict",
+        });
+      }
+      synchronizeAttachmentNames(db, req.user.id, state);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
     res.json({ revision: revision + 1, state });
   });
   app.use("/api", (_req, res) =>
