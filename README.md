@@ -92,10 +92,32 @@ Le ZIP comprend :
 
 - `operations.csv` : libellés, dates, périodes, biens, locataires, catégories, montants attendus, ventilation loyer/provisions, totaux réglés historiques, restes dus, règlements de la plage, références et notes.
 - `reglements.csv` : un règlement par ligne avec sa date réelle, son montant, sa ventilation, l’opération liée et l’indicateur dans/hors plage.
-- `biens.csv` et `parametres-sci.json` : informations des biens concernés, paramètres de la SCI et critères de sélection.
-- `justifs/` : les véritables fichiers demandés, dans des dossiers courts par opération pour faciliter l’extraction sous Windows.
-- `manifest.json` : l’index reliant opérations et documents, noms d’origine et noms normalisés, critères, date d’export et version des données source.
-- `selection.json` et `README.txt` : une extraction lisible de la sélection et les explications pour son exploitation. L’historique individuel non demandé n’est pas ajouté silencieusement.
+- `biens.csv` : noms courts, adresses, locataires et loyers de référence des biens concernés.
+- Un dossier par bien, nommé à partir de son nom court, contenant seulement `Encaissements/` et `Décaissements/`. Les justificatifs sont directement rangés dans le dossier correspondant au type de leur opération, en conservant leur libellé comme nom de fichier. Les chemins figurent dans `operations.csv`.
+- Les opérations communes sont regroupées dans `SCI - Général/`, avec les mêmes deux dossiers.
+
+Aucun fichier JSON, README ou dossier intermédiaire par opération n’est ajouté au dossier comptable. Les noms sont adaptés à Windows ; un suffixe distingue des biens ou documents qui porteraient le même nom après cette adaptation. Les limites de longueur des chemins peuvent raccourcir les noms de fichiers dans l’archive ; le libellé complet reste dans les CSV.
+
+Exemple :
+
+```text
+operations.csv
+reglements.csv
+biens.csv
+République T2/
+  Encaissements/
+    Encaissement · République T2 · Loyer · novembre 2026.pdf
+  Décaissements/
+    Décaissement · République T2 · Assurance · novembre 2026.pdf
+Tilleuls Studio/
+  Encaissements/
+  Décaissements/
+SCI - Général/
+  Encaissements/
+  Décaissements/
+```
+
+Les dossiers de justificatifs sont ajoutés lorsque « Inclure les justificatifs » est coché. Si cette option est décochée, le ZIP contient seulement les trois CSV.
 
 Les CSV sont en UTF-8 avec séparateur point-virgule, lisibles dans Excel. Le total réglé historique d’une opération et son montant attendu ne sont pas des encaissements supplémentaires : les mouvements réels figurent dans `reglements.csv`, et les totaux de plage n’incluent que les paiements de la plage.
 
@@ -166,7 +188,7 @@ Sur Linux, les tests utilisent `/usr/bin/chromium` lorsqu’il existe. `CHROMIUM
 - `src/app.js`, `src/finance-ui.js`, `src/style.css` : interface, périodicités, pointage et prévisions.
 - `src/model.js` : règles financières, validation, exports.
 - `src/api.js` : échanges avec le serveur.
-- `src/export-ui.js`, `src/accountant-export.js`, `server/exports.js` : sélection et dossier comptable ZIP.
+- `src/export-ui.js`, `src/accountant-export.js`, `server/exports.js` : sélection et dossier comptable ZIP classé par bien.
 - `src/document-names.js`, `server/attachments.js` : noms de pièces, migration et accès privé aux documents.
 - `server/` : comptes, sessions, SQLite, justificatifs privés et serveur de production.
 - `scripts/dev.mjs` : démarrage sous Windows et Linux.

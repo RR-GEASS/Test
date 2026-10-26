@@ -250,12 +250,84 @@ function zipFiles(bytes) {
   return files;
 }
 
-test("le ZIP comptable contient les opérations, règlements de la plage et justificatifs exacts", async () => {
+const csvNames = ["operations.csv", "reglements.csv", "biens.csv"];
+function assertSimpleArchive(files) {
+  for (const name of csvNames) assert.ok(files.has(name), name);
+  for (const name of files.keys()) {
+    assert.equal(/\.json$/i.test(name), false, "no JSON in accountant archive");
+    assert.equal(
+      /(?:^|\/)readme(?:\.|$)/i.test(name),
+      false,
+      "no README in accountant archive",
+    );
+    assert.equal(
+      name.startsWith("justifs/"),
+      false,
+      "no technical wrapper directory",
+    );
+    if (name.includes("/")) {
+      const parts = name.split("/");
+      assert.equal(
+        parts.length,
+        3,
+        "exactly property/type/file, or property/type/ directory entry",
+      );
+      assert.ok(["Encaissements", "Décaissements"].includes(parts[1]));
+      if (!name.endsWith("/"))
+        assert.ok(name.length <= 190, "Windows-friendly relative path");
+    } else
+      assert.ok(
+        csvNames.includes(name),
+        "only accounting CSVs at archive root",
+      );
+  }
+}
+function csvRows(buffer) {
+  const text = buffer.toString("utf8").replace(/^\ufeff/, "");
+  const rows = [];
+  let row = [],
+    cell = "",
+    quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (char === '"') {
+      if (quoted && text[i + 1] === '"') {
+        cell += '"';
+        i++;
+      } else quoted = !quoted;
+    } else if (char === ";" && !quoted) {
+      row.push(cell);
+      cell = "";
+    } else if ((char === "\r" || char === "\n") && !quoted) {
+      if (char === "\r" && text[i + 1] === "\n") i++;
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else cell += char;
+  }
+  if (cell || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  const [headers, ...data] = rows;
+  return data.map((values) =>
+    Object.fromEntries(
+      headers.map((header, index) => [header, values[index] || ""]),
+    ),
+  );
+}
+const documentEntries = (files) =>
+  [...files.entries()].filter(
+    ([name]) => name.includes("/") && !name.endsWith("/"),
+  );
+
+test("le ZIP classe les justificatifs par bien et direction, sans JSON ni README", async () => {
   const h = await harness();
   try {
     const owner = await account(h);
     await populate(h, owner);
-    const attachment = await upload(h, owner);
+    await upload(h, owner);
     await upload(h, owner, "outside-1", "hors plage.pdf");
     const r = await h.request("/api/exports/accountant", {
       cookie: owner.cookie,
@@ -269,53 +341,37 @@ test("le ZIP comptable contient les opérations, règlements de la plage et just
       /cap-sci-comptable-2026-01-01-2026-01-31\.zip/,
     );
     const files = zipFiles(r.bytes);
-    for (const name of [
-      "operations.csv",
-      "reglements.csv",
-      "biens.csv",
-      "parametres-sci.json",
-      "manifest.json",
-      "selection.json",
-      "README.txt",
-    ])
-      assert.ok(files.has(name), name);
-    const manifest = JSON.parse(files.get("manifest.json"));
-    assert.equal(manifest.sourceRevision, owner.revision);
-    assert.equal(manifest.summary.operationCount, 2);
-    assert.equal(manifest.summary.paymentCount, 2);
-    assert.equal(manifest.summary.periodIncomeCents, 42500);
-    assert.equal(manifest.summary.periodExpenseCents, 4200);
-    assert.equal(manifest.summary.documentCount, 1);
-    assert.equal(manifest.summary.includedDocumentCount, 1);
-    assert.equal(manifest.documents[0].id, attachment.id);
-    assert.equal(manifest.documents[0].originalName, "facture d’origine.pdf");
-    assert.deepEqual(files.get(manifest.documents[0].path), PDF);
-    assert.ok(manifest.documents[0].name.startsWith("Encaissement"));
-    const payments = files.get("reglements.csv").toString();
-    assert.ok(payments.includes("2026-01-15"));
-    assert.ok(!payments.includes("2025-12-15"));
-    assert.ok(!files.get("operations.csv").toString().includes("outside-1"));
+    assertSimpleArchive(files);
+    assert.ok(files.has("République T2/Encaissements/"));
+    assert.ok(files.has("République T2/Décaissements/"));
+    const docs = documentEntries(files);
+    assert.equal(docs.length, 1);
     assert.ok(
-      files
-        .get("operations.csv")
-        .toString()
-        .includes("Conserver toute cette note"),
+      docs[0][0].startsWith("République T2/Encaissements/Encaissement"),
+    );
+    assert.deepEqual(docs[0][1], PDF);
+    const operations = csvRows(files.get("operations.csv"));
+    assert.equal(operations.length, 2);
+    const rent = operations.find((t) => t["ID opération"] === "rent-1");
+    assert.equal(rent["Encaissements dans la plage EUR"], "425,00");
+    assert.equal(rent["Total réglé historique EUR"], "850,00");
+    assert.equal(rent["Notes"], "Conserver toute cette note");
+    assert.equal(rent["Justificatifs inclus"], docs[0][0]);
+    assert.equal(
+      operations.some((t) => t["ID opération"] === "outside-1"),
+      false,
     );
     assert.ok(files.get("biens.csv").toString().includes("12 rue des Tests"));
-    const selected = JSON.parse(files.get("selection.json"));
-    assert.equal(selected.format, "cap-sci-accountant-selection");
-    assert.equal(JSON.stringify(selected).includes("p-dec"), false);
-    assert.equal(selected.operations[0].reglementsExportes.length, 1);
-    assert.equal("payments" in selected.operations[0], false);
-    assert.equal(selected.operations[0].totalRegleHistoriqueCents, 85000);
-    assert.equal("user" in selected, false);
-    assert.equal("password_hash" in selected, false);
-    assert.equal("sessions" in selected, false);
+    const payments = csvRows(files.get("reglements.csv"));
+    assert.equal(payments.length, 2);
+    assert.ok(payments.some((p) => p["ID règlement"] === "p-jan"));
+    assert.ok(!payments.some((p) => p["ID règlement"] === "p-dec"));
   } finally {
     await h.close();
   }
 });
-test("l’export respecte les choix précis et peut exclure les fichiers sans perdre leur inventaire", async () => {
+
+test("les critères précis peuvent exclure tous les fichiers et conserver uniquement les trois CSV", async () => {
   const h = await harness();
   try {
     const owner = await account(h);
@@ -332,28 +388,31 @@ test("l’export respecte les choix précis et peut exclure les fichiers sans pe
     });
     assert.equal(r.status, 200);
     const files = zipFiles(r.bytes);
-    const manifest = JSON.parse(files.get("manifest.json"));
-    assert.equal(manifest.summary.operationCount, 1);
-    assert.equal(manifest.summary.paymentCount, 2);
-    assert.equal(manifest.summary.periodIncomeCents, 42500);
-    assert.equal(manifest.summary.includedDocumentCount, 0);
+    assertSimpleArchive(files);
+    assert.deepEqual([...files.keys()].sort(), [...csvNames].sort());
+    const operations = csvRows(files.get("operations.csv"));
+    assert.equal(operations.length, 1);
+    assert.equal(operations[0]["ID opération"], "rent-1");
+    assert.equal(operations[0]["Justificatifs inclus"], "");
+    const payments = csvRows(files.get("reglements.csv"));
+    assert.equal(payments.length, 2);
     assert.equal(
-      [...files.keys()].filter((n) => n.startsWith("justifs/")).length,
-      0,
+      payments.find((p) => p["ID règlement"] === "p-dec")[
+        "Dans la plage de dates"
+      ],
+      "Non",
     );
-    assert.ok(files.get("reglements.csv").toString().includes("2025-12-15"));
-    assert.ok(files.get("reglements.csv").toString().includes('"Non"'));
-    assert.equal(manifest.documents[0].included, false);
-    const selected = JSON.parse(files.get("selection.json"));
-    assert.equal(selected.operations[0].reglementsExportes.length, 2);
     assert.equal(
-      selected.operations[0].reglementsExportes.some((p) => p.id === "p-dec"),
-      true,
+      payments.find((p) => p["ID règlement"] === "p-jan")[
+        "Dans la plage de dates"
+      ],
+      "Oui",
     );
   } finally {
     await h.close();
   }
 });
+
 test("les documents et critères d’un autre compte ne peuvent pas être exportés", async () => {
   const h = await harness();
   try {
@@ -367,13 +426,10 @@ test("les documents et critères d’un autre compte ne peuvent pas être export
     });
     assert.equal(r.status, 200);
     const files = zipFiles(r.bytes);
-    const manifest = JSON.parse(files.get("manifest.json"));
-    assert.equal(manifest.summary.operationCount, 0);
-    assert.equal(manifest.summary.documentCount, 0);
-    assert.equal(
-      [...files.keys()].filter((n) => n.startsWith("justifs/")).length,
-      0,
-    );
+    assertSimpleArchive(files);
+    assert.deepEqual([...files.keys()].sort(), [...csvNames].sort());
+    assert.equal(csvRows(files.get("operations.csv")).length, 0);
+    assert.equal(csvRows(files.get("reglements.csv")).length, 0);
     r = await h.request("/api/exports/accountant", {
       cookie: other.cookie,
       body: { ...dates, operationIds: ["rent-1"] },
@@ -388,6 +444,7 @@ test("les documents et critères d’un autre compte ne peuvent pas être export
     await h.close();
   }
 });
+
 test("l’authentification, l’origine et les dates sont vérifiées avant la création du ZIP", async () => {
   const h = await harness();
   try {
@@ -426,12 +483,13 @@ test("l’authentification, l’origine et les dates sont vérifiées avant la c
     await h.close();
   }
 });
-test("la sélection par échéance exporte aussi les opérations non réglées et indique les paiements hors plage", async () => {
+
+test("les échéances non réglées et les paiements hors plage restent distingués dans les CSV", async () => {
   const h = await harness();
   try {
     const owner = await account(h);
     await populate(h, owner);
-    const r = await h.request("/api/exports/accountant", {
+    let r = await h.request("/api/exports/accountant", {
       cookie: owner.cookie,
       body: {
         startDate: "2025-12-01",
@@ -440,23 +498,230 @@ test("la sélection par échéance exporte aussi les opérations non réglées e
       },
     });
     assert.equal(r.status, 200);
-    const files = zipFiles(r.bytes);
-    const manifest = JSON.parse(files.get("manifest.json"));
-    assert.equal(manifest.summary.operationCount, 1);
-    assert.equal(manifest.summary.paymentCount, 2);
-    assert.equal(manifest.summary.periodIncomeCents, 42500);
-    assert.ok(files.get("reglements.csv").toString().includes("2026-01-15"));
-    assert.ok(files.get("reglements.csv").toString().includes('"Non"'));
-    const pending = await h.request("/api/exports/accountant", {
+    let files = zipFiles(r.bytes);
+    assertSimpleArchive(files);
+    assert.equal(csvRows(files.get("operations.csv")).length, 1);
+    let payments = csvRows(files.get("reglements.csv"));
+    assert.equal(payments.length, 2);
+    assert.equal(
+      payments.find((p) => p["ID règlement"] === "p-jan")[
+        "Dans la plage de dates"
+      ],
+      "Non",
+    );
+    r = await h.request("/api/exports/accountant", {
       cookie: owner.cookie,
       body: { ...dates, dateBasis: "due", statuses: ["overdue"] },
     });
-    const pendingFiles = zipFiles(pending.bytes);
-    const pendingManifest = JSON.parse(pendingFiles.get("manifest.json"));
-    assert.equal(pendingManifest.summary.operationCount, 1);
-    assert.equal(pendingManifest.summary.paymentCount, 0);
+    assert.equal(r.status, 200);
+    files = zipFiles(r.bytes);
+    assertSimpleArchive(files);
+    assert.equal(csvRows(files.get("operations.csv")).length, 1);
+    assert.equal(
+      csvRows(files.get("operations.csv"))[0]["ID opération"],
+      "pending-1",
+    );
+    assert.equal(csvRows(files.get("reglements.csv")).length, 0);
+  } finally {
+    await h.close();
+  }
+});
+
+test("les biens et opérations générales ont chacun exactement deux dossiers de direction", async () => {
+  const h = await harness();
+  try {
+    const owner = await account(h);
+    await populate(h, owner);
+    owner.state.properties.push({
+      ...owner.state.properties[0],
+      id: "property-2",
+      name: "Tilleuls Studio",
+    });
+    owner.state.transactions.push({
+      ...owner.state.transactions[1],
+      id: "second-property",
+      propertyId: "property-2",
+      payments: owner.state.transactions[1].payments.map((p) => ({
+        ...p,
+        id: "p-second",
+      })),
+    });
+    owner.state.transactions.push({
+      ...owner.state.transactions[1],
+      id: "general-operation",
+      propertyId: "",
+      payments: owner.state.transactions[1].payments.map((p) => ({
+        ...p,
+        id: "p-general",
+      })),
+    });
+    await save(h, owner);
+    for (const id of [
+      "rent-1",
+      "insurance-1",
+      "second-property",
+      "general-operation",
+    ])
+      await upload(h, owner, id, `${id}.PDF`);
+    const r = await h.request("/api/exports/accountant", {
+      cookie: owner.cookie,
+      body: dates,
+    });
+    assert.equal(r.status, 200);
+    const files = zipFiles(r.bytes);
+    assertSimpleArchive(files);
+    for (const property of [
+      "République T2",
+      "Tilleuls Studio",
+      "SCI - Général",
+    ])
+      for (const direction of ["Encaissements", "Décaissements"])
+        assert.ok(files.has(`${property}/${direction}/`));
+    const docs = documentEntries(files);
+    assert.equal(docs.length, 4);
+    assert.equal(
+      docs.filter(([name]) => name.startsWith("République T2/Encaissements/"))
+        .length,
+      1,
+    );
+    assert.equal(
+      docs.filter(([name]) => name.startsWith("République T2/Décaissements/"))
+        .length,
+      1,
+    );
+    assert.equal(
+      docs.filter(([name]) => name.startsWith("Tilleuls Studio/Décaissements/"))
+        .length,
+      1,
+    );
+    assert.equal(
+      docs.filter(([name]) => name.startsWith("SCI - Général/Décaissements/"))
+        .length,
+      1,
+    );
+    for (const [, data] of docs) assert.deepEqual(data, PDF);
+    const referenced = csvRows(files.get("operations.csv")).flatMap((row) =>
+      row["Justificatifs inclus"].split("\n").filter(Boolean),
+    );
+    assert.equal(referenced.length, 4);
+    for (const path of referenced) assert.ok(files.has(path));
+  } finally {
+    await h.close();
+  }
+});
+
+test("deux opérations homonymes du même bien ne peuvent pas écraser leurs justificatifs", async () => {
+  const h = await harness();
+  try {
+    const owner = await account(h);
+    await populate(h, owner);
+    const original = owner.state.transactions[1];
+    original.normalizedLabel = false;
+    original.label = "Même facture";
+    owner.state.transactions.push({
+      ...original,
+      id: "same-label",
+      payments: original.payments.map((p) => ({ ...p, id: "p-same" })),
+    });
+    await save(h, owner);
+    await upload(h, owner, "insurance-1", "first.pdf");
+    await upload(h, owner, "same-label", "second.pdf");
+    const r = await h.request("/api/exports/accountant", {
+      cookie: owner.cookie,
+      body: { ...dates, types: ["expense"] },
+    });
+    assert.equal(r.status, 200);
+    const files = zipFiles(r.bytes);
+    assertSimpleArchive(files);
+    const docs = documentEntries(files);
+    assert.equal(docs.length, 2);
+    assert.ok(files.has("République T2/Décaissements/Même facture.pdf"));
+    assert.ok(files.has("République T2/Décaissements/Même facture (2).pdf"));
+    for (const [, data] of docs) assert.deepEqual(data, PDF);
+    const paths = csvRows(files.get("operations.csv")).map(
+      (t) => t["Justificatifs inclus"],
+    );
+    assert.equal(new Set(paths).size, 2);
+    for (const path of paths) assert.ok(files.has(path));
+  } finally {
+    await h.close();
+  }
+});
+
+test("les noms de biens dangereux ou confondus sont désambiguïsés de façon stable", async () => {
+  const h = await harness();
+  try {
+    const owner = await account(h);
+    await populate(h, owner);
+    const names = ["A/B", "A:B", "a - b", "SCI - Général", "../CON"];
+    owner.state.properties = names.map((name, i) => ({
+      ...owner.state.properties[0],
+      id: `safe-property-${i}`,
+      name,
+    }));
+    const template = owner.state.transactions[1];
+    owner.state.transactions = owner.state.properties.map((p, i) => ({
+      ...template,
+      id: `safe-operation-${i}`,
+      propertyId: p.id,
+      normalizedLabel: false,
+      label: "Un même document " + "très long ".repeat(30),
+      payments: template.payments.map((payment) => ({
+        ...payment,
+        id: `safe-payment-${i}`,
+      })),
+    }));
+    // Plain legacy labels are limited to160 characters; keep this test valid while filling the path budget.
+    owner.state.transactions.forEach((t) => (t.label = t.label.slice(0, 150)));
+    owner.state.transactions.push({
+      ...owner.state.transactions[0],
+      id: "safe-general",
+      propertyId: "",
+      payments: template.payments.map((payment) => ({
+        ...payment,
+        id: "safe-general-payment",
+      })),
+    });
+    await save(h, owner);
+    for (const t of owner.state.transactions)
+      await upload(h, owner, t.id, "original.pdf");
+    const all = await h.request("/api/exports/accountant", {
+      cookie: owner.cookie,
+      body: dates,
+    });
+    assert.equal(all.status, 200);
+    const files = zipFiles(all.bytes);
+    assertSimpleArchive(files);
+    const docs = documentEntries(files);
+    assert.equal(docs.length, 6);
+    const parents = docs.map(([name]) => name.split("/")[0]);
+    assert.equal(
+      new Set(parents.map((name) => name.toLocaleLowerCase("fr"))).size,
+      6,
+    );
+    assert.ok(parents.includes("SCI - Général"));
+    assert.ok(parents.includes("SCI - Général (2)"));
     assert.ok(
-      pendingFiles.get("operations.csv").toString().includes("pending-1"),
+      parents.every(
+        (name) => !/[<>:"\\|?*]/.test(name) && !/^CON$/i.test(name),
+      ),
+    );
+    const rows = csvRows(files.get("operations.csv"));
+    for (const row of rows) assert.ok(files.has(row["Justificatifs inclus"]));
+    const oneId = "safe-operation-1";
+    const expected = rows.find((row) => row["ID opération"] === oneId)[
+      "Justificatifs inclus"
+    ];
+    const single = await h.request("/api/exports/accountant", {
+      cookie: owner.cookie,
+      body: { ...dates, operationIds: [oneId] },
+    });
+    assert.equal(single.status, 200);
+    const selected = zipFiles(single.bytes);
+    assertSimpleArchive(selected);
+    assert.ok(
+      selected.has(expected),
+      "property folder remains stable after filtering out colliding properties",
     );
   } finally {
     await h.close();

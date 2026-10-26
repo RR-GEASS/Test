@@ -9,9 +9,10 @@ const operationRow = (page, detail) =>
   page.getByTestId("operation-row").filter({ hasText: detail });
 
 async function navigate(page, name) {
-  const button = page
-    .locator("aside nav")
-    .getByRole("button", { name, exact: true });
+  const button = page.locator("aside nav").getByRole("button", {
+    name: name === "Biens immobiliers" ? /^Biens immobiliers/ : name,
+    exact: name !== "Biens immobiliers",
+  });
   if (!(await button.isVisible()))
     await page.getByRole("button", { name: "Ouvrir la navigation" }).click();
   await button.click();
@@ -48,8 +49,10 @@ async function addOperation(
     amount = "125,40",
     type = "income",
     status = "paid",
+    property,
   } = {},
 ) {
+  await navigate(page, "Opérations");
   await page
     .getByRole("button", { name: "Nouvelle opération", exact: true })
     .click();
@@ -63,6 +66,10 @@ async function addOperation(
   await dialog.getByLabel("Date / échéance *").fill(date);
   await dialog.getByLabel("Période concernée").fill(date.slice(0, 7));
   await dialog.getByLabel("Statut", { exact: true }).selectOption(status);
+  if (property)
+    await dialog
+      .getByLabel("Bien", { exact: true })
+      .selectOption({ label: property });
   await dialog
     .getByRole("button", { name: "Ajouter l’opération", exact: true })
     .click();
@@ -144,6 +151,71 @@ function unzipEntries(bytes) {
   }
   return entries;
 }
+
+function csvRows(text) {
+  const value = text.replace(/^\ufeff/, "");
+  const rows = [];
+  let row = [],
+    cell = "",
+    quoted = false;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === '"') {
+      if (quoted && value[i + 1] === '"') {
+        cell += '"';
+        i++;
+      } else quoted = !quoted;
+    } else if (ch === ";" && !quoted) {
+      row.push(cell);
+      cell = "";
+    } else if ((ch === "\r" || ch === "\n") && !quoted) {
+      if (ch === "\r" && value[i + 1] === "\n") i++;
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else cell += ch;
+  }
+  if (cell || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows;
+}
+function assertSimplePackage(entries) {
+  const names = [...entries.keys()];
+  expect(
+    names.some(
+      (name) => /\.json$/i.test(name) || /(?:^|\/)readme(?:\.|$)/i.test(name),
+    ),
+  ).toBe(false);
+  expect(names.filter((name) => !name.includes("/")).sort()).toEqual([
+    "biens.csv",
+    "operations.csv",
+    "reglements.csv",
+  ]);
+  for (const name of names.filter(
+    (name) => name.includes("/") && !name.endsWith("/"),
+  )) {
+    const parts = name.split("/");
+    expect(parts).toHaveLength(3);
+    expect(["Encaissements", "Décaissements"]).toContain(parts[1]);
+  }
+}
+async function addProperty(page, name) {
+  await navigate(page, "Biens immobiliers");
+  await page
+    .getByRole("button", { name: "Ajouter un bien", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Nom court du bien *").fill(name);
+  await dialog
+    .getByRole("button", { name: "Ajouter le bien", exact: true })
+    .click();
+  await expect(dialog).not.toBeVisible();
+  await saved(page);
+}
+
 async function openExport(
   page,
   start = `${year}-01-01`,
@@ -187,25 +259,20 @@ test("le dossier comptable contient les CSV et les justificatifs renommés, avec
   const download = await pending;
   expect(download.suggestedFilename()).toMatch(/\.zip$/i);
   const entries = unzipEntries(await readFile(await download.path()));
-  for (const name of [
-    "operations.csv",
-    "reglements.csv",
-    "biens.csv",
-    "parametres-sci.json",
-    "manifest.json",
-    "README.txt",
-  ])
+  for (const name of ["operations.csv", "reglements.csv", "biens.csv"])
     expect(entries.has(name)).toBe(true);
   expect(entries.get("operations.csv").toString("utf8")).toContain(
     "Recette à transmettre",
   );
   expect(entries.get("reglements.csv").toString("utf8")).toContain("125,40");
   const documentEntry = [...entries.entries()].find(
-    ([name]) => name.startsWith("justifs/") && name.endsWith(".pdf"),
+    ([name]) =>
+      name.startsWith("SCI - Général/Encaissements/") && name.endsWith(".pdf"),
   );
   expect(documentEntry).toBeDefined();
   expect(documentEntry[0]).toContain("Recette à transmettre");
   expect(documentEntry[1]).toEqual(pdf);
+  assertSimplePackage(entries);
   expect(
     [...entries.keys()].some(
       (name) => name.includes("..") || name.startsWith("/"),
@@ -401,9 +468,8 @@ test("la sélection manuelle exclut réellement une opération du dossier et per
   const csv = entries.get("operations.csv").toString("utf8");
   expect(csv).toContain("Ligne à transmettre");
   expect(csv).not.toContain("Ligne à conserver privée");
-  expect(
-    JSON.parse(entries.get("manifest.json").toString("utf8")).operations,
-  ).toHaveLength(1);
+  expect(csvRows(csv)).toHaveLength(2);
+  assertSimplePackage(entries);
   await page
     .getByRole("checkbox", { name: "Tout inclure", exact: true })
     .check();
@@ -424,6 +490,7 @@ test("un dossier en cours de téléchargement garde les dates demandées malgré
 }) => {
   await register(page);
   await addOperation(page, "Dossier de janvier");
+  await addOperation(page, "Dossier de février", { date: `${year}-02-10` });
   await openExport(page, `${year}-01-01`, `${year}-01-31`);
   let release;
   const gate = new Promise((resolve) => (release = resolve));
@@ -447,6 +514,67 @@ test("un dossier en cours de téléchargement garde les dates demandées malgré
     `cap-sci-comptable-${year}-01-01-${year}-01-31.zip`,
   );
   const files = unzipEntries(await readFile(await downloaded.path()));
-  const manifest = JSON.parse(files.get("manifest.json").toString("utf8"));
-  expect(manifest.filters.endDate).toBe(`${year}-01-31`);
+  const exported = files.get("operations.csv").toString("utf8");
+  expect(exported).toContain("Dossier de janvier");
+  expect(exported).not.toContain("Dossier de février");
+  assertSimplePackage(files);
+});
+
+test("les pièces sont rangées directement par bien et par sens sans dossier par opération", async ({
+  page,
+}) => {
+  await register(page);
+  await addProperty(page, "République T2");
+  await addProperty(page, "Tilleuls Studio");
+  const operations = [
+    [
+      "Loyer République",
+      { property: "République T2" },
+      "République T2/Encaissements/",
+    ],
+    [
+      "Assurance République",
+      { property: "République T2", type: "expense" },
+      "République T2/Décaissements/",
+    ],
+    [
+      "Loyer Tilleuls",
+      { property: "Tilleuls Studio" },
+      "Tilleuls Studio/Encaissements/",
+    ],
+    ["Apport commun", {}, "SCI - Général/Encaissements/"],
+  ];
+  for (const [detail, options] of operations) {
+    await addOperation(page, detail, options);
+    const dialog = await openDocuments(page, detail);
+    await uploadPDF(dialog, "piece.pdf");
+    await dialog
+      .locator(".dialog-footer")
+      .getByRole("button", { name: "Fermer", exact: true })
+      .click();
+  }
+  await openExport(page);
+  const pending = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "Télécharger le dossier ZIP", exact: true })
+    .click();
+  const files = unzipEntries(await readFile(await (await pending).path()));
+  assertSimplePackage(files);
+  const pdfs = [...files.entries()].filter(([name]) => name.endsWith(".pdf"));
+  expect(pdfs).toHaveLength(4);
+  for (const [detail, , prefix] of operations) {
+    const match = pdfs.find(
+      ([name]) => name.startsWith(prefix) && name.includes(detail),
+    );
+    expect(match).toBeDefined();
+    expect(match[1]).toEqual(pdf);
+  }
+  const rows = csvRows(files.get("operations.csv").toString("utf8"));
+  const paths = rows[0].indexOf("Justificatifs inclus");
+  expect(paths).toBeGreaterThan(-1);
+  for (const row of rows.slice(1)) {
+    const path = row[paths];
+    expect(files.has(path)).toBe(true);
+    expect(files.get(path)).toEqual(pdf);
+  }
 });
