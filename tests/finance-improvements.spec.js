@@ -5,6 +5,7 @@ const today = () => {
 };
 async function navigate(page,name) {
   const button = page.locator("aside nav").getByRole("button",{name,exact:true});
+  await expect(button).toBeAttached();
   if (!(await button.isVisible())) await page.getByRole("button",{name:"Ouvrir la navigation"}).click();
   await button.click();
 }
@@ -22,7 +23,7 @@ async function seed(page, additions) {
   await page.evaluate(async additions => {
     const session = await (await fetch("/api/session")).json();
     const state = {...session.state,...additions};
-    const response = await fetch("/api/state",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({state,revision:session.revision,accountId:session.user.id})});
+    const response = await fetch("/api/test-fixtures/state",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({state,revision:session.revision,accountId:session.user.id})});
     if (!response.ok) throw new Error(JSON.stringify(await response.json()));
   },additions);
   await page.reload();
@@ -77,9 +78,9 @@ test("une location préremplit une périodicité et conserve le locataire lié",
   await navigate(page,"Opérations périodiques");
   await page.getByRole("button",{name:"Nouvelle périodicité",exact:true}).click();
   const d = page.getByRole("dialog");
-  await d.getByLabel("Location associée",{exact:true}).selectOption("lease1");
+  await d.locator('[name=leaseId]').selectOption("lease1");
   await expect(d.getByLabel("Loyer hors charges (€) *")).toHaveValue("750,00");
-  await expect(d.getByLabel("Fournisseur / bénéficiaire / locataire",{exact:true})).toHaveValue("Camille Exemple");
+  await expect(d.locator('[name=counterparty]')).toHaveValue("Camille Exemple");
   await d.getByRole("button",{name:"Créer la périodicité",exact:true}).click();
   await expect(d).not.toBeVisible();
   await expect(page.getByText("Enregistré en ligne",{exact:true})).toBeVisible();

@@ -13,7 +13,7 @@ const dates = {
   includeDocuments: true,
 };
 async function harness() {
-  const { app, close } = createApp({ dbPath: ":memory:", production: false });
+  const { app, close } = createApp({ allowTestFixtures: true, dbPath: ":memory:", production: false });
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -71,7 +71,7 @@ async function account(h, email = "owner@example.test") {
   return { ...r.data, cookie: r.cookie };
 }
 async function save(h, owner) {
-  const r = await h.request("/api/state", {
+  const r = await h.request("/api/test-fixtures/state", {
     method: "PUT",
     cookie: owner.cookie,
     body: {

@@ -34,6 +34,7 @@ import {
   fold,
 } from "./model.js";
 import { icon, esc } from "./ui.js";
+import { configureEntryForm, entryRequirements } from "./entry-rules.js";
 import { assistEntityFields } from "./assisted-select.js";
 import { api } from "./api.js";
 import { createAttachmentStatus } from "./attachment-status.js";
@@ -407,10 +408,21 @@ function mountDialog(html) {
   dialogFocus.set(d, focus);
   d.showModal();
   assistEntityFields(d);
+  configureEntryForm(d);
   d.addEventListener("cancel", e => { e.preventDefault(); requestCloseDialog(d); });
   d.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () => requestCloseDialog(d)));
-  d.querySelector("form")?.addEventListener("input", e => { e.currentTarget.dataset.changed = "true"; });
-  d.querySelector("form")?.addEventListener("change", e => { e.currentTarget.dataset.changed = "true"; });
+  const changed = e => {
+    e.currentTarget.dataset.changed = "true";
+    d.querySelector(".validation-summary")?.remove();
+    const fields = new Set([e.target.name]);
+    if (["supplierId", "tenantId", "leaseId", "propertyId", "category", "type"].includes(e.target.name))
+      ["supplierId", "tenantId", "leaseId", "propertyId", "counterparty"].forEach(name => fields.add(name));
+    if (["rent", "charges", "capital", "interest", "insurance"].includes(e.target.name)) fields.add("amount");
+    d.querySelectorAll("[data-error]").forEach(el => { if (fields.has(el.dataset.error)) el.textContent = ""; });
+    d.querySelectorAll("[aria-invalid]").forEach(el => { if (fields.has(el.name)) el.setAttribute("aria-invalid", "false"); });
+  };
+  d.querySelector("form")?.addEventListener("input", changed);
+  d.querySelector("form")?.addEventListener("change", changed);
   return d;
 }
 const field = (name, label, value = "", type = "text", attrs = "") =>
@@ -510,9 +522,9 @@ function transactionForm(id, duplicateId) {
     const suppliers = (state.suppliers || []).filter(s => !s.archived || s.id === selectedSupplier);
     const property = form.elements.propertyId.value;
     const tenants = (state.tenants || []).filter(n => !n.archived || n.id === selectedTenant);
-    const leases = (state.leases || []).filter(l => (!property || l.propertyId === property) && (!l.endDate || l.endDate >= form.elements.date.value || l.id === selectedLease));
+    const leases = (state.leases || []).filter(l => !property || l.propertyId === property);
     if (!leases.some(l => l.id === selectedLease)) selectedLease = "";
-    d.querySelector("#operation-parties").innerHTML = `<div class="form-grid">${selectField("supplierId", "Fournisseur enregistré", [{id:"",label:"Aucun / saisie libre"},...suppliers.map(s => ({id:s.id,label:s.name}))],selectedSupplier)}${selectField("tenantId", "Locataire enregistré", [{id:"",label:"Aucun / saisie libre"},...tenants.map(n => ({id:n.id,label:n.name}))],selectedTenant)}${selectField("leaseId", "Location / locataire", [{id:"",label:"Aucune / saisie libre"},...leases.map(l => ({id:l.id,label:`${state.tenants.find(n => n.id === l.tenantId)?.name || "Locataire"} · ${propertyFor(l.propertyId)?.name || "Bien"} · ${l.startDate}`}))], selectedLease)}</div><button type="button" class="text-link" id="inline-supplier">Créer un fournisseur</button><button type="button" class="text-link" id="inline-tenant">Créer un locataire</button>`;
+    d.querySelector("#operation-parties").innerHTML = `<div class="form-grid">${selectField("supplierId", "Fournisseur enregistré", [{id:"",label:"Aucun / saisie libre"},...suppliers.map(s => ({id:s.id,label:s.name}))],selectedSupplier)}${selectField("tenantId", "Locataire enregistré", [{id:"",label:"Aucun / saisie libre"},...tenants.map(n => ({id:n.id,label:n.name}))],selectedTenant)}${selectField("leaseId", "Location / locataire", [{id:"",label:"Aucune / saisie libre"},...leases.map(l => ({id:l.id,label:`${state.tenants.find(n => n.id === l.tenantId)?.name || "Locataire"} · ${propertyFor(l.propertyId)?.name || "Bien"} · ${l.startDate}`}))], selectedLease)}</div><button type="button" class="text-link" id="inline-supplier">Créer un fournisseur</button><button type="button" class="text-link" id="inline-tenant">Créer un locataire</button><button type="button" class="text-link" id="inline-lease">Créer une location</button>`;
     form.elements.supplierId.addEventListener("change", () => {
       selectedSupplier = form.elements.supplierId.value;
       const supplier = suppliers.find(s => s.id === selectedSupplier);
@@ -547,6 +559,9 @@ function transactionForm(id, duplicateId) {
         preview();
       }
     });
+    d.querySelector("#inline-lease").addEventListener("click", () => directoryUI.leaseForm(undefined,selectedTenant,form.elements.propertyId.value,lease=>{
+      selectedTenant=lease.tenantId; selectedLease=lease.id; selectedSupplier=""; parties(); form.elements.leaseId.dispatchEvent(new Event("change",{bubbles:true}));
+    }));
     d.querySelector("#inline-tenant").addEventListener("click", () => directoryUI.tenantForm(undefined, tenant => {
       selectedTenant=tenant.id; selectedLease=""; selectedSupplier=""; parties(); form.elements.tenantId.dispatchEvent(new Event("change",{bubbles:true}));
     }));
@@ -639,6 +654,11 @@ function transactionForm(id, duplicateId) {
   });
   form.addEventListener("input", preview);
   form.addEventListener("change", preview);
+  form.addEventListener("change", () => {
+    selectedSupplier=form.elements.supplierId.value;
+    selectedTenant=form.elements.tenantId.value;
+    selectedLease=form.elements.leaseId.value;
+  });
   amounts();
   if (existing && getPayments(t).length) {
     d.querySelector("[name=status]").disabled = true;
@@ -664,6 +684,7 @@ function transactionForm(id, duplicateId) {
       },
       state,
     );
+    Object.assign(result.errors, entryRequirements(result.value));
     if (showErrors(d, result.errors)) return;
     const v = result.value;
     const duplicates = state.transactions.filter(row => row.id !== v.id && ((v.reference && fold(row.reference) === fold(v.reference) && fold(row.counterparty) === fold(v.counterparty)) || (row.date === v.date && row.amountCents === v.amountCents && row.propertyId === v.propertyId && row.type === v.type && row.category === v.category)));
@@ -711,13 +732,14 @@ function propertyForm(id) {
     archived: false,
   };
   const d = mountDialog(
-    `<dialog class="form-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader(existing ? "Modifier le bien" : "Ajouter un bien", "Une nouvelle adresse dans votre espace.", "building")}${field("name", "Nom court du bien *", p.name, "text", 'maxlength="100" required autofocus placeholder="Ex. : Appartement du centre"')}${field("address", "Adresse", p.address, "text", 'maxlength="250"')}${field("tenant", "Locataire", p.tenant, "text", 'maxlength="160"')}<div class="form-grid">${field("rent", "Loyer mensuel hors charges (€)", moneyInput(p.rentCents), "text", 'inputmode="decimal"')}${field("charges", "Provisions mensuelles (€)", moneyInput(p.chargesCents), "text", 'inputmode="decimal"')}</div><p class="form-note">Ces montants sont des références. Pour conserver les changements de locataire, créez les fiches dans « Locataires » puis les occupations dans « Locations ». Le loyer périodique se prépare depuis la location.</p><fieldset class="property-suppliers"><legend>Fournisseurs rattachés au bien</legend><input type="search" id="supplier-assignment-search" aria-label="Rechercher un fournisseur à rattacher" placeholder="Rechercher un fournisseur…">${(state.suppliers || []).filter(s => !s.archived || (p.supplierIds || []).includes(s.id)).map(s => `<label class="check-label" data-supplier-choice="${esc(fold(s.name))}"><input type="checkbox" name="supplierIds" value="${esc(s.id)}" ${(p.supplierIds || []).includes(s.id) ? "checked" : ""}>${esc(s.name)}</label>`).join("") || '<p class="form-note">Créez vos fiches dans Fournisseurs pour les rattacher ici.</p>'}</fieldset>${existing ? `<button type="button" class="text-link" id="property-lease">Rattacher un locataire via une location</button>` : ""}${formFooter(existing ? "Enregistrer" : "Ajouter le bien")}</form></dialog>`,
+    `<dialog class="form-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader(existing ? "Modifier le bien" : "Ajouter un bien", "Une nouvelle adresse dans votre espace.", "building")}${field("name", "Nom court du bien *", p.name, "text", 'maxlength="100" required autofocus placeholder="Ex. : Appartement du centre"')}${field("address", "Adresse", p.address, "text", 'maxlength="250"')}${p.tenant && !(state.leases || []).some(l=>l.propertyId===p.id) ? field("tenant", "Ancien locataire (nom historique)", p.tenant, "text", 'maxlength="160" readonly') : ""}<div class="form-grid">${field("rent", "Loyer mensuel hors charges (€)", moneyInput(p.rentCents), "text", 'inputmode="decimal"')}${field("charges", "Provisions mensuelles (€)", moneyInput(p.chargesCents), "text", 'inputmode="decimal"')}</div><p class="form-note">Ces montants sont des références. Pour conserver les changements de locataire, créez les fiches dans « Locataires » puis les occupations dans « Locations ». Le loyer périodique se prépare depuis la location.</p><fieldset class="property-suppliers"><legend>Fournisseurs rattachés au bien</legend><input type="search" id="supplier-assignment-search" aria-label="Rechercher un fournisseur à rattacher" placeholder="Rechercher un fournisseur…">${(state.suppliers || []).filter(s => !s.archived || (p.supplierIds || []).includes(s.id)).map(s => `<label class="check-label" data-supplier-choice="${esc(fold(s.name))}"><input type="checkbox" name="supplierIds" value="${esc(s.id)}" ${(p.supplierIds || []).includes(s.id) ? "checked" : ""}>${esc(s.name)}</label>`).join("") || '<p class="form-note">Créez vos fiches dans Fournisseurs pour les rattacher ici.</p>'}</fieldset>${existing ? `<button type="button" class="text-link" id="property-lease">Rattacher un locataire via une location</button>` : ""}${formFooter(existing ? "Enregistrer" : "Ajouter le bien")}</form></dialog>`,
   );
   d.querySelector("#supplier-assignment-search").addEventListener("input", e => d.querySelectorAll("[data-supplier-choice]").forEach(label => label.hidden = !label.dataset.supplierChoice.includes(fold(e.target.value))));
   d.querySelector("#property-lease")?.addEventListener("click", () => directoryUI.leaseForm(undefined, "", p.id));
   d.querySelector("form").addEventListener("submit", (e) => {
     e.preventDefault();
     const result = validateProperty({
+      ...p,
       ...Object.fromEntries(new FormData(e.currentTarget)),
       id: p.id,
       archived: p.archived,
@@ -731,6 +753,7 @@ function propertyForm(id) {
     )
       result.errors.name =
         "Ce nom court est déjà utilisé. Choisissez un nom unique.";
+    if (!result.value.address) result.errors.address="Renseignez l’adresse du bien.";
     if (showErrors(d, result.errors)) return;
     if (existing)
       state.properties = state.properties.map((row) =>
@@ -1082,6 +1105,7 @@ financeUI = createFinanceUI({
   attachmentStatus,
   createSupplier: callback => directoryUI.supplierForm(undefined, callback),
   createTenant: callback => directoryUI.tenantForm(undefined, callback),
+  createLease: (seed,callback) => directoryUI.leaseForm(undefined,seed.tenantId || "",seed.propertyId || "",callback),
   persist,
   mountDialog,
   closeDialog,

@@ -46,7 +46,7 @@ test("le contrôle avant export utilise les pièces du compte et respecte les di
       { ...base, id: "missing-doc" },
       { ...base, id: "exempt", documentNotRequired: true },
     ];
-    const saved = await fetch("/api/state", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state: session.state, revision: session.revision, accountId: session.user.id }) });
+    const saved = await fetch("/api/test-fixtures/state", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state: session.state, revision: session.revision, accountId: session.user.id }) });
     if (!saved.ok) throw new Error(await saved.text());
     const uploaded = await fetch("/api/transactions/with-doc/attachments", { method: "POST", headers: { "Content-Type": "application/octet-stream", "X-File-Name": "facture.pdf" }, body: new TextEncoder().encode("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF") });
     if (!uploaded.ok) throw new Error(await uploaded.text());

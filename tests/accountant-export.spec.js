@@ -1,3 +1,4 @@
+import { completeEntry, rentalFixtures } from "./entry-helpers.js";
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { inflateRawSync } from "node:zlib";
@@ -70,6 +71,7 @@ async function addOperation(
     await dialog
       .getByLabel("Bien", { exact: true })
       .selectOption({ label: property });
+  await completeEntry(page,dialog);
   await dialog
     .getByRole("button", { name: "Ajouter l’opération", exact: true })
     .click();
@@ -212,6 +214,7 @@ async function addProperty(page, name) {
     .click();
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Nom court du bien *").fill(name);
+  await dialog.locator('[name=address]').fill('Rue des Tests');
   await dialog
     .getByRole("button", { name: "Ajouter le bien", exact: true })
     .click();

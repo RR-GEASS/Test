@@ -51,11 +51,19 @@ Les documents sont accessibles depuis les fiches : contrats sur le fournisseur, 
 
 ## Liens et saisie assistée
 
-Les champs Bien, Fournisseur, Locataire et Location proposent une recherche par nom en plus de leur liste. Choisir un résultat enregistre l’identifiant de la fiche, pas seulement son nom. Une saisie sans correspondance exacte ne crée pas de rattachement implicite. Vous pouvez créer un fournisseur ou un locataire pendant la saisie d’une opération ou périodicité.
+Les champs Bien, Fournisseur, Locataire et Location proposent une seule liste par information ; tapez les premières lettres au clavier pour retrouver une fiche. Choisir un résultat enregistre l’identifiant de la fiche, pas seulement son nom. Un rattachement correspond toujours à une fiche choisie dans la liste. Vous pouvez créer un fournisseur ou un locataire pendant la saisie d’une opération ou périodicité.
 
 Choisir un bien pour un loyer propose sa location à la date de l’opération lorsqu’elle est unique. Choisir un locataire retrouve sa location si elle est unique pour le bien et la date ; sinon, choisissez la location explicitement. Celle-ci complète bien, locataire, loyer et provisions. Un fournisseur propose sa catégorie et, si un seul bien lui est explicitement rattaché, ce bien.
 
 Dans **Biens immobiliers → Modifier**, cochez les fournisseurs habituels du bien. **Dossier du bien** rassemble ses locations, les fournisseurs explicitement rattachés ou présents dans ses mouvements et un accès aux opérations. Les fiches fournisseurs affichent les biens associés ; le journal permet d’ouvrir les fiches liées. Pour rattacher un locataire au bien, créez une location datée depuis son dossier, afin de conserver l’historique. Ces liens sont conservés dans la base SQLite et les sauvegardes JSON. Une simple égalité de noms ne rattache pas automatiquement les anciennes saisies.
+
+## Vérifier les saisies
+
+Les formulaires d’opérations et périodicités n’affichent qu’un choix de tiers : **Location et locataire** pour les loyers/provisions/dépôts de garantie, **Fournisseur / banque** pour les dépenses et prêts, ou **Personne / organisme** pour les apports et autres encaissements. Le nom du tiers et les identifiants déduits du choix sont enregistrés sans être redemandés. Une location sélectionnée fournit déjà le bien : ce champ est alors masqué.
+
+Les champs nécessaires bloquent l’enregistrement : montant total positif, dates valides, type et catégorie cohérents ; fournisseur enregistré pour une dépense ; location, bien et locataire pour un mouvement locatif ; tiers identifié pour un apport. Les biens demandent un nom unique et une adresse ; une location demande des dates cohérentes, un loyer positif et des montants de charges/dépôt non négatifs. Les fiches contacts demandent un nom, contrôlent les coordonnées et vérifient le format du SIRET lorsqu’il est renseigné. Ces contrôles vérifient la cohérence des données ; ils ne certifient pas les pièces ou les déclarations fiscales.
+
+Le serveur contrôle les nouvelles opérations, périodicités et informations essentielles modifiées. Les données historiques déjà enregistrées restent lisibles et les pointages peuvent continuer ; une ancienne fiche incomplète se complète lors de son édition.
 
 ## Gagner du temps chaque mois
 
@@ -206,6 +214,9 @@ Le fichier est créé dans `/app/data/backups/`. Copiez-le régulièrement hors 
 Un compte créé sur votre ordinateur ne migre pas automatiquement sur le serveur : exportez sa SCI en JSON, créez un compte sur le serveur en ligne, puis importez le fichier. Les mots de passe, sessions et fichiers justificatifs ne figurent pas dans les exports JSON de la SCI. Pour déplacer aussi les comptes et justificatifs, migrez la base SQLite complète, serveur arrêté ou à partir d’une sauvegarde cohérente.
 
 ## Vérifications
+
+Les scénarios de tests chargent explicitement leurs anciennes données par un mécanisme de fixtures réservé au serveur de tests. Les enregistrements normaux de ce serveur appliquent les mêmes règles de saisie que l’application. Cette route de fixtures est absente de l’application normale et de la production.
+
 
 ```powershell
 npm.cmd test

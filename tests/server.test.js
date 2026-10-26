@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createApp } from "../server/app.js";
 const password = "a-long-test-password-2026";
 async function harness(dbPath = ":memory:", production = false) {
-  const { app, close } = createApp({ dbPath, production });
+  const { app, close } = createApp({ allowTestFixtures: true, dbPath, production });
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -82,7 +82,7 @@ test("les données de deux comptes restent séparées et un accès anonyme est r
     a.data.state.settings.name = "SCI privée A";
     assert.equal(
       (
-        await h.request("/api/state", {
+        await h.request("/api/test-fixtures/state", {
           method: "PUT",
           cookie: a.cookie,
           body: { state: a.data.state, revision: 0, accountId: a.data.user.id },
@@ -94,7 +94,7 @@ test("les données de deux comptes restent séparées et un accès anonyme est r
     assert.equal(other.data.state.settings.name, "SCI Test IS");
     assert.equal(
       (
-        await h.request("/api/state", {
+        await h.request("/api/test-fixtures/state", {
           method: "PUT",
           body: { state: a.data.state, revision: 0, accountId: a.data.user.id },
         })
@@ -116,7 +116,7 @@ test("les écritures d’un autre site sont bloquées et une version périmée n
     };
     assert.equal(
       (
-        await h.request("/api/state", {
+        await h.request("/api/test-fixtures/state", {
           method: "PUT",
           body,
           cookie: a.cookie,
@@ -126,11 +126,11 @@ test("les écritures d’un autre site sont bloquées et une version périmée n
       403,
     );
     assert.equal(
-      (await h.request("/api/state", { method: "PUT", body, cookie: a.cookie }))
+      (await h.request("/api/test-fixtures/state", { method: "PUT", body, cookie: a.cookie }))
         .status,
       200,
     );
-    const conflict = await h.request("/api/state", {
+    const conflict = await h.request("/api/test-fixtures/state", {
       method: "PUT",
       body,
       cookie: a.cookie,
@@ -153,7 +153,7 @@ test("les sauvegardes financières invalides et les doublons de comptes sont ref
     bad.settings.openingBalanceCents = 0.123;
     assert.equal(
       (
-        await h.request("/api/state", {
+        await h.request("/api/test-fixtures/state", {
           method: "PUT",
           cookie: a.cookie,
           body: { state: bad, revision: 0, accountId: a.data.user.id },
@@ -197,7 +197,7 @@ test("les données et les sessions sont conservées après redémarrage SQLite",
     h = await harness(join(dir, "test.sqlite"));
     const a = await register(h);
     a.data.state.settings.name = "SCI persistante";
-    await h.request("/api/state", {
+    await h.request("/api/test-fixtures/state", {
       cookie: a.cookie,
       method: "PUT",
       body: { state: a.data.state, revision: 0, accountId: a.data.user.id },
@@ -233,7 +233,7 @@ test("un ancien onglet ne peut pas enregistrer sa SCI dans un compte différent"
   try {
     const a = await register(h, "first@example.test");
     const b = await register(h, "second@example.test");
-    const result = await h.request("/api/state", {
+    const result = await h.request("/api/test-fixtures/state", {
       method: "PUT",
       cookie: b.cookie,
       body: { state: a.data.state, revision: 0, accountId: a.data.user.id },
@@ -273,7 +273,7 @@ test("les échéances générées côté serveur persistent sans doublon ni réa
         generatedThrough: "",
       },
     ];
-    const saved = await h.request("/api/state", {
+    const saved = await h.request("/api/test-fixtures/state", {
       method: "PUT",
       cookie: a.cookie,
       body: { accountId: a.data.user.id, state: a.data.state, revision: 0 },
@@ -290,7 +290,7 @@ test("les échéances générées côté serveur persistent sans doublon ni réa
       saved.data.state.transactions.map((t) => t.id),
     );
     loaded.data.state.transactions.shift();
-    const deleted = await h.request("/api/state", {
+    const deleted = await h.request("/api/test-fixtures/state", {
       method: "PUT",
       cookie: a.cookie,
       body: {
@@ -332,7 +332,7 @@ test("une erreur de renommage ne valide pas partiellement la modification d’un
         notes: "",
       },
     ];
-    const saved = await h.request("/api/state", {
+    const saved = await h.request("/api/test-fixtures/state", {
       method: "PUT",
       cookie: a.cookie,
       body: { accountId: a.data.user.id, revision: 0, state: a.data.state },
@@ -357,7 +357,7 @@ test("une erreur de renommage ne valide pas partiellement la modification d’un
       "CREATE TRIGGER reject_rename BEFORE UPDATE OF name ON attachments WHEN NEW.name<>OLD.name BEGIN SELECT RAISE(ABORT,'simulated rename failure'); END;",
     );
     saved.data.state.transactions[0].label = "Après modification";
-    const failed = await h.request("/api/state", {
+    const failed = await h.request("/api/test-fixtures/state", {
       method: "PUT",
       cookie: a.cookie,
       body: {
@@ -391,11 +391,11 @@ test("une location enregistrée ne peut pas être réattribuée par une écritur
     state.properties.push({id:"p1",name:"Bien",address:"",tenant:"",rentCents:0,chargesCents:0,archived:false});
     state.tenants.push(...["t1","t2"].map(id => ({id,name:id,email:"",phone:"",address:"",notes:"",archived:false})));
     state.leases.push({id:"l1",tenantId:"t1",propertyId:"p1",startDate:"2026-01-01",endDate:"",rentCents:50000,chargesCents:0,depositCents:50000,paymentDay:1,notes:""});
-    const saved = await h.request("/api/state",{cookie,method:"PUT",body:{state,revision:account.data.revision,accountId:user.id}});
+    const saved = await h.request("/api/test-fixtures/state",{cookie,method:"PUT",body:{state,revision:account.data.revision,accountId:user.id}});
     assert.equal(saved.status,200);
     const changed = structuredClone(saved.data.state);
     changed.leases[0].tenantId = "t2";
-    const denied = await h.request("/api/state",{cookie,method:"PUT",body:{state:changed,revision:saved.data.revision,accountId:user.id}});
+    const denied = await h.request("/api/test-fixtures/state",{cookie,method:"PUT",body:{state:changed,revision:saved.data.revision,accountId:user.id}});
     assert.equal(denied.status,409);
     assert.equal(denied.data.code,"lease_identity_changed");
     const current = await h.request("/api/session",{cookie});

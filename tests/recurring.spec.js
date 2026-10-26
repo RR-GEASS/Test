@@ -1,3 +1,4 @@
+import { completeEntry, rentalFixtures } from "./entry-helpers.js";
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 
@@ -62,9 +63,7 @@ async function addProperty(page, name = propertyName) {
   await dialog
     .getByLabel("Adresse", { exact: true })
     .fill("12 rue de la République");
-  await dialog
-    .getByLabel("Locataire", { exact: true })
-    .fill("Locataire de test");
+
   await dialog.getByLabel("Loyer mensuel hors charges (€)").fill("800");
   await dialog.getByLabel("Provisions mensuelles (€)").fill("50");
   await dialog
@@ -75,6 +74,7 @@ async function addProperty(page, name = propertyName) {
 }
 
 async function createRecurrence(page, { expense = false } = {}) {
+  await rentalFixtures(page);
   await navigate(page, "Opérations périodiques");
   await page
     .getByRole("button", { name: "Nouvelle périodicité", exact: true })
@@ -98,6 +98,7 @@ async function createRecurrence(page, { expense = false } = {}) {
     await dialog.getByLabel("Loyer hors charges (€) *").fill("800");
     await dialog.getByLabel("Provisions sur charges (€)").fill("50");
   }
+  await completeEntry(page,dialog);
   await dialog
     .getByRole("button", { name: "Créer la périodicité", exact: true })
     .click();

@@ -1,3 +1,4 @@
+import { completeEntry } from "./entry-helpers.js";
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { createEmptyState, serializeBackup } from "../src/model.js";
@@ -32,7 +33,7 @@ async function addProperty(page, name = "Appartement Érable") {
   const d = page.getByRole("dialog");
   await d.getByLabel("Nom court du bien *").fill(name);
   await d.getByLabel("Adresse", { exact: true }).fill("Rue des Tests");
-  await d.getByLabel("Locataire", { exact: true }).fill("Locataire de test");
+
   await d.getByLabel("Loyer mensuel hors charges (€)").fill("800,50");
   await d.getByRole("button", { name: "Ajouter le bien", exact: true }).click();
   await expect(d).not.toBeVisible();
@@ -74,6 +75,8 @@ async function addTransaction(page, label = "Loyer de test", settings = {}) {
     await d
       .getByLabel("Bien", { exact: true })
       .selectOption({ label: settings.property });
+  await completeEntry(page,d);
+  await completeEntry(page,d);
   await d
     .getByRole("button", { name: "Ajouter l’opération", exact: true })
     .click();
@@ -139,12 +142,14 @@ test("les montants invalides sont refusés puis une opération peut être modifi
   await d.getByLabel("Catégorie", { exact: true }).selectOption("other_income");
   await d.getByLabel("Détail (facultatif)").fill("Réparation à modifier");
   await d.getByLabel("Montant (€) *").fill("1,005");
+  await completeEntry(page,d);
   await d
     .getByRole("button", { name: "Ajouter l’opération", exact: true })
     .click();
   await expect(d).toBeVisible();
   await expect(d.locator("[data-error=amount]")).toBeVisible();
   await d.getByLabel("Montant (€) *").fill("125,90");
+  await completeEntry(page,d);
   await d
     .getByRole("button", { name: "Ajouter l’opération", exact: true })
     .click();
@@ -429,6 +434,7 @@ test("un conflit entre appareils conserve la version du serveur et propose de r�
     await d.getByLabel("Détail (facultatif)").fill("Modification concurrente");
     await d.getByLabel("Montant (€) *").fill("25");
     await addTransaction(page, "Mouvement déjà enregistré", { amount: "100" });
+    await completeEntry(other,d);
     await d
       .getByRole("button", { name: "Ajouter l’opération", exact: true })
       .click();
@@ -477,6 +483,7 @@ test("une session interrompue permet de se reconnecter sans perdre l’opératio
       body: "{}",
     }),
   );
+  await completeEntry(page,d);
   await d
     .getByRole("button", { name: "Ajouter l’opération", exact: true })
     .click();

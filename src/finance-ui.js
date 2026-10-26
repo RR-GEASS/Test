@@ -1,3 +1,4 @@
+import { entryRequirements } from "./entry-rules.js";
 import {
   CATEGORIES,
   uid,
@@ -145,7 +146,7 @@ export function createFinanceUI(ctx) {
         "Catégorie",
         CATEGORIES.filter((c) => c.type === r.type),
         r.category,
-      )}${selectField("propertyId", "Bien", propertyOptions(), r.propertyId)}${selectField("frequency", "Fréquence", frequencies, r.frequency)}</div><div class="form-grid">${selectField("supplierId", "Fournisseur enregistré", [{id:"",label:"Aucun fournisseur"}, ...(getState().suppliers || []).filter(s => !s.archived || s.id === r.supplierId).map(s => ({id:s.id,label:s.name}))], r.supplierId || "")}${selectField("leaseId", "Location associée", [{id:"",label:"Aucune location"}, ...(getState().leases || []).filter(l => !l.endDate || l.endDate >= todayISO() || l.id === r.leaseId).map(l => ({id:l.id,label: `${prop(l.propertyId)?.name || "Bien"} · ${(getState().tenants || []).find(t => t.id === l.tenantId)?.name || "Locataire"}`}))], r.leaseId || "")}</div>${selectField("tenantId", "Locataire enregistré", [{id:"",label:"Aucun locataire"}, ...(getState().tenants || []).filter(t => !t.archived || t.id === r.tenantId).map(t => ({id:t.id,label:t.name}))],r.tenantId || "")}<p class="form-note">La location propose les montants du bail et son locataire. Le fournisseur propose sa catégorie habituelle.</p><div id="recurring-amounts"></div><div class="form-grid">${field("startDate", "Date de début *", r.startDate, "date", "required")}${field("endDate", "Date de fin", r.endDate, "date")}${field("paymentDay", "Jour d’échéance (1 à 31)", r.paymentDay || Number(r.startDate.slice(8,10)), "number", 'min="1" max="31" step="1" required')}</div>${field("detail", "Détail", r.detail || "", "text", 'maxlength="160" placeholder="Ex. : Assurance propriétaire"')}${field("counterparty", "Fournisseur / bénéficiaire / locataire", r.counterparty || "", "text", 'maxlength="160"')}${field("reference", "Référence de facture", r.reference || "", "text", 'maxlength="100"')}<div class="form-field"><label for="field-notes">Note pour le comptable</label><textarea id="field-notes" name="notes" maxlength="3000" rows="3">${esc(r.notes || "")}</textarea><span class="field-error" data-error="notes"></span></div><label class="check-label"><input type="checkbox" name="documentNotRequired" ${r.documentNotRequired ? "checked" : ""}>Justificatif non nécessaire pour ces échéances</label><p class="auto-label-preview" id="recurrence-preview"></p><p class="form-note">Le jour d’échéance choisi est conservé à chaque période. Si ce jour n’existe pas, l’échéance tombe le dernier jour du mois. Pour un prêt, choisissez « Échéance de prêt » et renseignez la répartition capital, intérêts et assurance. Vous pourrez l’ajuster chaque mois dans « Pointage mensuel », d’après le tableau d’amortissement bancaire.</p><p class="form-note">Les échéances jusqu’à la fin du mois courant seront ajoutées en attente. Les échéances déjà créées ne seront pas modifiées.</p>${formFooter(existing ? "Enregistrer" : "Créer la périodicité")}</form></dialog>`,
+      )}${selectField("propertyId", "Bien", propertyOptions(), r.propertyId)}${selectField("frequency", "Fréquence", frequencies, r.frequency)}</div><div class="form-grid">${selectField("supplierId", "Fournisseur enregistré", [{id:"",label:"Aucun fournisseur"}, ...(getState().suppliers || []).filter(s => !s.archived || s.id === r.supplierId).map(s => ({id:s.id,label:s.name}))], r.supplierId || "")}${selectField("leaseId", "Location associée", [{id:"",label:"Aucune location"}, ...(getState().leases || []).map(l => ({id:l.id,label: `${prop(l.propertyId)?.name || "Bien"} · ${(getState().tenants || []).find(t => t.id === l.tenantId)?.name || "Locataire"}`}))], r.leaseId || "")}</div>${selectField("tenantId", "Locataire enregistré", [{id:"",label:"Aucun locataire"}, ...(getState().tenants || []).filter(t => !t.archived || t.id === r.tenantId).map(t => ({id:t.id,label:t.name}))],r.tenantId || "")}<p class="form-note">La location propose les montants du bail et son locataire. Le fournisseur propose sa catégorie habituelle.</p><div id="recurring-amounts"></div><div class="form-grid">${field("startDate", "Date de début *", r.startDate, "date", "required")}${field("endDate", "Date de fin", r.endDate, "date")}${field("paymentDay", "Jour d’échéance (1 à 31)", r.paymentDay || Number(r.startDate.slice(8,10)), "number", 'min="1" max="31" step="1" required')}</div>${field("detail", "Détail", r.detail || "", "text", 'maxlength="160" placeholder="Ex. : Assurance propriétaire"')}${field("counterparty", "Fournisseur / bénéficiaire / locataire", r.counterparty || "", "text", 'maxlength="160"')}${field("reference", "Référence de facture", r.reference || "", "text", 'maxlength="100"')}<div class="form-field"><label for="field-notes">Note pour le comptable</label><textarea id="field-notes" name="notes" maxlength="3000" rows="3">${esc(r.notes || "")}</textarea><span class="field-error" data-error="notes"></span></div><label class="check-label"><input type="checkbox" name="documentNotRequired" ${r.documentNotRequired ? "checked" : ""}>Justificatif non nécessaire pour ces échéances</label><p class="auto-label-preview" id="recurrence-preview"></p><p class="form-note">Le jour d’échéance choisi est conservé à chaque période. Si ce jour n’existe pas, l’échéance tombe le dernier jour du mois. Pour un prêt, choisissez « Échéance de prêt » et renseignez la répartition capital, intérêts et assurance. Vous pourrez l’ajuster chaque mois dans « Pointage mensuel », d’après le tableau d’amortissement bancaire.</p><p class="form-note">Les échéances jusqu’à la fin du mois courant seront ajoutées en attente. Les échéances déjà créées ne seront pas modifiées.</p>${formFooter(existing ? "Enregistrer" : "Créer la périodicité")}</form></dialog>`,
     );
     let customPaymentDay = !!r.paymentDay;
     d.querySelector("[name=paymentDay]").addEventListener("input", () => { customPaymentDay = true; });
@@ -170,6 +171,15 @@ export function createFinanceUI(ctx) {
       select.closest(".form-field").append(button);
       button.addEventListener("click",()=>ctx.createTenant(tenant=>{
         select.innerHTML=options([{id:"",label:"Aucun locataire"},...(getState().tenants || []).filter(t=>!t.archived || t.id===tenant.id).map(t=>({id:t.id,label:t.name}))],tenant.id);
+        select.dispatchEvent(new Event("change",{bubbles:true}));
+      }));
+    }
+    if(ctx.createLease) {
+      const select=d.querySelector("[name=leaseId]");
+      const button=document.createElement("button");button.type="button";button.className="text-link";button.textContent="Créer une location";
+      select.closest(".form-field").append(button);
+      button.addEventListener("click",()=>ctx.createLease({tenantId:d.querySelector("[name=tenantId]").value,propertyId:d.querySelector("[name=propertyId]").value},lease=>{
+        select.innerHTML=options([{id:"",label:"Aucune location"},...(getState().leases || []).map(l=>({id:l.id,label:`${prop(l.propertyId)?.name || "Bien"} · ${(getState().tenants || []).find(t=>t.id===l.tenantId)?.name || "Locataire"}`}))],lease.id);
         select.dispatchEvent(new Event("change",{bubbles:true}));
       }));
     }
@@ -267,8 +277,8 @@ export function createFinanceUI(ctx) {
       const supplier = (getState().suppliers || []).find(s => s.id === e.target.value);
       if (!supplier) return;
       clearLease();
-      d.querySelector("[name=type]").value = "expense";
-      d.querySelector("[name=category]").innerHTML = options(CATEGORIES.filter(c => c.type === "expense"), supplier.category || "other_expense");
+      if (d.querySelector("[name=type]").value === "expense")
+        d.querySelector("[name=category]").innerHTML = options(CATEGORIES.filter(c => c.type === "expense"), supplier.category || "other_expense");
       d.querySelector("[name=counterparty]").value = supplier.name;
       const properties=getState().properties.filter(p=>(p.supplierIds || []).includes(supplier.id));
       if(!d.querySelector("[name=propertyId]").value && properties.length===1) d.querySelector("[name=propertyId]").value=properties[0].id;
@@ -293,8 +303,11 @@ export function createFinanceUI(ctx) {
       const tenant = (getState().tenants || []).find(t => t.id === lease.tenantId);
       d.querySelector("[name=supplierId]").value = "";
       d.querySelector("[name=tenantId]").value = lease.tenantId;
-      d.querySelector("[name=type]").value = "income";
-      d.querySelector("[name=category]").innerHTML = options(CATEGORIES.filter(c => c.type === "income"), "rent");
+      const category = d.querySelector("[name=category]").value;
+      if (!["rent", "recoverable", "deposit_received", "deposit_returned"].includes(category)) {
+        d.querySelector("[name=type]").value = "income";
+        d.querySelector("[name=category]").innerHTML = options(CATEGORIES.filter(c => c.type === "income"), "rent");
+      }
       d.querySelector("[name=propertyId]").value = lease.propertyId;
       d.querySelector("[name=counterparty]").value = tenant?.name || "";
       d.querySelector("[name=startDate]").value = firstLeasePayment(lease);
@@ -302,8 +315,12 @@ export function createFinanceUI(ctx) {
       customPaymentDay = true;
       d.querySelector("[name=endDate]").value = lease.endDate || "";
       amounts();
-      d.querySelector("[name=rent]").value = moneyInput(lease.rentCents);
-      d.querySelector("[name=charges]").value = moneyInput(lease.chargesCents);
+      if (d.querySelector("[name=rent]")) {
+        d.querySelector("[name=rent]").value = moneyInput(lease.rentCents);
+        d.querySelector("[name=charges]").value = moneyInput(lease.chargesCents);
+      } else if (d.querySelector("[name=amount]")) {
+        d.querySelector("[name=amount]").value = moneyInput(category === "recoverable" ? lease.chargesCents : lease.depositCents);
+      }
       preview();
     });
     d.querySelector("form").addEventListener("input", preview);
@@ -320,6 +337,7 @@ export function createFinanceUI(ctx) {
         },
         getState(),
       );
+      Object.assign(result.errors, entryRequirements(result.value));
       if (showErrors(d, result.errors)) return;
       const next = structuredClone(getState());
       next.recurrences ||= [];

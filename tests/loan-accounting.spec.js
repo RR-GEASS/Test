@@ -1,3 +1,4 @@
+import { completeEntry } from "./entry-helpers.js";
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 
@@ -57,7 +58,7 @@ test("le prêt périodique se corrige par échéance dans le pointage et conserv
   await dialog.getByLabel("Type", { exact: true }).selectOption("expense");
   await dialog.getByLabel("Catégorie", { exact: true }).selectOption("loan_payment");
   await split(dialog, "750", "220", "30");
-  await dialog.locator('[name="counterparty"]').fill("Banque du bien");
+  await completeEntry(page,dialog,"Banque du bien");
   await dialog.locator('[name="reference"]').fill("PRET-123");
   await dialog.locator('[name="notes"]').fill("Tableau bancaire à vérifier");
   await dialog.getByLabel("Date de début *").fill(monthStart(-1));
@@ -125,13 +126,14 @@ test("un prêt ponctuel calcule son total et garde la saisie après un clic hors
   await dialog.getByLabel("Type", { exact: true }).selectOption("expense");
   await dialog.getByLabel("Catégorie", { exact: true }).selectOption("loan_payment");
   await split(dialog, "500,25", "100,75", "20");
-  await dialog.locator('[name="counterparty"]').fill("Banque ponctuelle");
+  await completeEntry(page,dialog,"Banque ponctuelle");
   await dialog.locator('[name="reference"]').fill("REF-456");
   await dialog.locator('[name="notes"]').fill("Échéance exceptionnelle");
   await page.mouse.click(5, 5);
   await expect(dialog).toBeVisible();
   await expect(dialog.locator('[name="capital"]')).toHaveValue("500,25");
   await expect(dialog.locator('[name="reference"]')).toHaveValue("REF-456");
+  await completeEntry(page,dialog);
   await dialog.getByRole("button", { name: "Ajouter l’opération", exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await saved(page);
@@ -192,6 +194,7 @@ test("les formulaires de prêt et le pointage restent utilisables sur mobile", a
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(await dialog.evaluate((node) => node.getBoundingClientRect().width <= innerWidth)).toBe(true);
   await page.screenshot({ path: ".artifacts/loan-mobile-form.png", fullPage: true });
+  await completeEntry(page,dialog);
   await dialog.getByRole("button", { name: "Ajouter l’opération", exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await saved(page);

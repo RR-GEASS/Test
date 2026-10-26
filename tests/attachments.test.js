@@ -22,7 +22,7 @@ const JPEG = Buffer.from([
 const password = "attachment-test-password-2026";
 
 async function harness() {
-  const { app, close } = createApp({ dbPath: ":memory:", production: false });
+  const { app, close } = createApp({ allowTestFixtures: true, dbPath: ":memory:", production: false });
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -74,7 +74,7 @@ async function account(h, email = "owner@example.test") {
   return { cookie: response.cookie, ...response.data };
 }
 async function save(h, owner) {
-  const response = await h.request("/api/state", {
+  const response = await h.request("/api/test-fixtures/state", {
     method: "PUT",
     cookie: owner.cookie,
     body: {

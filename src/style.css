@@ -3150,3 +3150,9 @@ dialog h2 {
 .property-suppliers label { margin-top:8px; }
 .property-suppliers label[hidden] { display:none; }
 .property-suppliers input[type=search] { width:100%; padding:9px; background:var(--surface); border:1px solid var(--line); border-radius:6px; }
+
+.form-field[hidden], button[hidden] { display: none !important; }
+.form-field:has(> select[name="leaseId"]),
+.form-field:has(> select[name="supplierId"]) {
+  grid-column: 1 / -1;
+}

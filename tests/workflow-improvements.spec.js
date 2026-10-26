@@ -1,3 +1,4 @@
+import { completeEntry } from "./entry-helpers.js";
 import { test, expect } from "@playwright/test";
 
 const today = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Paris" }).format(new Date());
@@ -33,7 +34,7 @@ async function seed(page, transactions) {
   const result = await page.evaluate(async (rows) => {
     const account = await (await fetch("/api/session")).json();
     account.state.transactions = rows;
-    const response = await fetch("/api/state", {
+    const response = await fetch("/api/test-fixtures/state", {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ state: account.state, revision: account.revision, accountId: account.user.id }),
     });
@@ -49,7 +50,7 @@ async function newExpense(page, { amount = "125", reference = "FAC-original" } =
   await dialog.getByLabel("Type", { exact: true }).selectOption("expense");
   await dialog.getByLabel("Catégorie", { exact: true }).selectOption("maintenance");
   await dialog.locator('[name="amount"]').fill(amount);
-  await dialog.locator('[name="counterparty"]').fill("Artisan Test");
+  await completeEntry(page,dialog,"Artisan Test");
   await dialog.locator('[name="reference"]').fill(reference);
   return dialog;
 }
@@ -75,6 +76,7 @@ test("dupliquer une opération conserve sa saisie utile sans recopier règlement
   await expect(dialog.locator('[name="status"]')).toHaveValue("pending");
   await expect(dialog.locator('[name="counterparty"]')).toHaveValue("Artisan Test");
   await dialog.locator('[name="amount"]').fill("126");
+  await completeEntry(page,dialog,"Artisan Test");
   await dialog.locator('button[type="submit"]').click();
   await expect(page.locator("dialog[open]")).toHaveCount(0);
   await saved(page);
@@ -94,10 +96,12 @@ test("un doublon probable demande une confirmation et peut être enregistré vol
   await register(page);
   await seed(page, [transaction("original")]);
   const dialog = await newExpense(page);
+  await completeEntry(page,dialog,"Artisan Test");
   await dialog.locator('button[type="submit"]').click();
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText(/doublon|semblable|similaire|existe/i);
   expect((await session(page)).state.transactions).toHaveLength(1);
+  await completeEntry(page,dialog,"Artisan Test");
   await dialog.locator('button[type="submit"]').click();
   await expect(page.locator("dialog[open]")).toHaveCount(0);
   await saved(page);
@@ -117,6 +121,7 @@ test("le filtre des pièces manquantes distingue les justificatifs non nécessai
   await filter.selectOption("all");
   await page.getByTestId("operation-row").filter({ hasText: "Facture manquante" }).locator('[data-action="edit-transaction"]').click();
   await topDialog(page).getByLabel("Justificatif non nécessaire", { exact: true }).check();
+  await completeEntry(page,topDialog(page),"Artisan Test");
   await topDialog(page).locator('button[type="submit"]').click();
   await saved(page);
   await filter.selectOption("missing");
@@ -143,10 +148,12 @@ test("créer un fournisseur depuis une opération conserve la saisie et une ferm
   await expect(topDialog(page)).toContainText("Abandonner les modifications");
   await topDialog(page).getByRole("button", { name: "Continuer la saisie", exact: true }).click();
   await expect(topDialog(page).locator('[name="detail"]')).toHaveValue("Dépannage à conserver");
+  await completeEntry(page,topDialog(page),"Artisan Test");
   await topDialog(page).locator('button[type="submit"]').click();
   await expect(page.locator("dialog[open]")).toHaveCount(0);
   await saved(page);
   const state = (await session(page)).state;
-  expect(state.suppliers).toHaveLength(1);
-  expect(state.transactions[0]).toMatchObject({ supplierId: state.suppliers[0].id, amountCents: 8950 });
+  const created=state.suppliers.find(s=>s.name==="Plomberie Horizon");
+  expect(created).toBeTruthy();
+  expect(state.transactions[0]).toMatchObject({ supplierId: created.id, amountCents: 8950 });
 });

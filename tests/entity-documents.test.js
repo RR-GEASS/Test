@@ -12,7 +12,7 @@ const PDF = Buffer.from("%PDF-1.7\n1 0 obj<</Type/Catalog>>endobj\n%%EOF\n");
 async function harness() {
   const directory = await mkdtemp(join(tmpdir(), "capsci-entity-documents-"));
   const dbPath = join(directory, "test.sqlite");
-  const { app, close } = createApp({ dbPath, production: false });
+  const { app, close } = createApp({ allowTestFixtures: true, dbPath, production: false });
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -39,7 +39,7 @@ async function account(h, email) {
   return { cookie: response.cookie, ...response.data };
 }
 async function save(h, owner) {
-  const result = await h.request("/api/state", { method: "PUT", cookie: owner.cookie, body: { accountId: owner.user.id, revision: owner.revision, state: owner.state } });
+  const result = await h.request("/api/test-fixtures/state", { method: "PUT", cookie: owner.cookie, body: { accountId: owner.user.id, revision: owner.revision, state: owner.state } });
   assert.equal(result.status, 200, JSON.stringify(result.data));
   owner.revision = result.data.revision;
 }

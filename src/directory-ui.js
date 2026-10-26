@@ -110,7 +110,7 @@ export function createDirectoryUI(ctx) {
       await save("tenants", result.value, "La fiche locataire a été enregistrée.", onSaved);
     });
   }
-  function leaseForm(id, tenantId = "", propertyId = "") {
+  function leaseForm(id, tenantId = "", propertyId = "", onSaved) {
     if (!allowMutation()) return;
     const existing = find("leases", id);
     const l = existing || { id: uid(), tenantId, propertyId, startDate: todayISO(), endDate: "", rentCents: 0, chargesCents: 0, depositCents: 0, paymentDay: 1, notes: "" };
@@ -134,6 +134,7 @@ export function createDirectoryUI(ctx) {
     d.querySelector("form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const result = validateLease({ ...l, ...Object.fromEntries(new FormData(e.currentTarget)) }, getState());
+      if (result.value.rentCents <= 0) result.errors.rent="Le loyer hors charges doit être supérieur à zéro.";
       if (showErrors(d, result.errors)) return;
       const next = structuredClone(getState());
       next.leases ||= [];
@@ -154,6 +155,7 @@ export function createDirectoryUI(ctx) {
       setState(next);
       closeDialog();
       await persist("La location et ses dates ont été enregistrées.");
+      onSaved?.(result.value);
     });
   }
   function operationHistory(kind, id) {

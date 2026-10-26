@@ -1,3 +1,4 @@
+import { validateChangedEntries } from "../src/entry-rules.js";
 import express from "express";
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
@@ -36,6 +37,7 @@ export function createApp({
   production = process.env.NODE_ENV === "production",
   trustProxy = process.env.SCI_TRUST_PROXY === "1",
   authLimit = 30,
+  allowTestFixtures = false,
 } = {}) {
   if (dbPath !== ":memory:")
     mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
@@ -265,7 +267,7 @@ export function createApp({
     res.clearCookie(COOKIE, { ...cookieOptions, maxAge: undefined });
     res.json({ ok: true });
   });
-  app.put("/api/state", requireUser, (req, res) => {
+  app.put(["/api/state", ...(!production && allowTestFixtures ? ["/api/test-fixtures/state"] : [])], requireUser, (req, res) => {
     const { state: input, revision, accountId } = req.body || {};
     if (accountId !== req.user.id)
       return res.status(409).json({
@@ -279,6 +281,10 @@ export function createApp({
     try {
       state = parseBackup(input);
       state.mode = "real";
+      const previous = JSON.parse(db.prepare("SELECT state FROM users WHERE id=?").get(req.user.id).state);
+      // Fixture loading is available only in the explicitly isolated test app.
+      // All normal writes, including those from that app, enforce entry rules.
+      if (req.path !== "/api/test-fixtures/state") validateChangedEntries(state, previous);
       generateRecurringTransactions(
         state,
         monthEnd(

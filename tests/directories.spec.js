@@ -34,6 +34,7 @@ async function property(page) {
   await go(page, "properties");
   await page.locator('.page-heading [data-action="add-property"]').click();
   await top(page).getByLabel("Nom court du bien *").fill("Tilleuls T2");
+  await top(page).locator('[name=address]').fill('Rue des Tilleuls');
   await top(page).getByLabel("Loyer mensuel hors charges (€)").fill("800");
   await top(page).getByLabel("Provisions mensuelles (€)").fill("50");
   await top(page).getByRole("button", { name: "Ajouter le bien", exact: true }).click();
@@ -123,7 +124,7 @@ test("terminer une location avant la première échéance met sa périodicité e
       chargesCents: 5000, counterparty: "Locataire départ anticipé", frequency: "monthly",
       startDate: `${year}-02-01`, endDate: "", active: true, generatedThrough: "", detail: "",
     });
-    const response = await fetch("/api/state", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state: snapshot.state, revision: snapshot.revision, accountId: snapshot.user.id }) });
+    const response = await fetch("/api/test-fixtures/state", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state: snapshot.state, revision: snapshot.revision, accountId: snapshot.user.id }) });
     if (!response.ok) throw new Error(await response.text());
   }, year);
   await page.reload();
