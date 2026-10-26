@@ -101,6 +101,10 @@ export function createEmptyState(taxRegime = "IS") {
     properties: [],
     transactions: [],
     recurrences: [],
+    suppliers: [],
+    tenants: [],
+    leases: [],
+    bankChecks: [],
   };
 }
 export function createDemoState() {
@@ -306,6 +310,118 @@ function validateLoanComponents(input, value, errors) {
     errors.amount =
       "Le capital, les intérêts et l’assurance doivent être positifs ou nuls et correspondre au montant total du prêt.";
 }
+// Directory entries remain separate from operation snapshots: changing a contact
+// never rewrites the counterparty recorded on an earlier operation.
+function directoryContact(input, supplier = false) {
+  const value = {
+    id: clean(input.id) || uid(), name: clean(input.name),
+    email: clean(input.email), phone: clean(input.phone),
+    address: clean(input.address), notes: clean(input.notes),
+    archived: input.archived === undefined ? false : input.archived,
+  };
+  const errors = {};
+  if (!value.name || value.name.length > 160) errors.name = "Saisissez un nom de 1 à 160 caractères.";
+  if (value.id.length > 150) errors.id = "Identifiant trop long.";
+  if (value.email && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.email) || value.email.length > 254)) errors.email = "Saisissez une adresse e-mail valide.";
+  if (value.phone.length > 50) errors.phone = "50 caractères maximum.";
+  if (value.address.length > 500) errors.address = "500 caractères maximum.";
+  if (value.notes.length > 3000) errors.notes = "3 000 caractères maximum.";
+  if (typeof value.archived !== "boolean") errors.archived = "Le statut est invalide.";
+  if (supplier) {
+    for (const field of ["legalName", "category", "reference", "siret"])
+      value[field] = clean(input[field]);
+    if (value.legalName.length > 250) errors.legalName = "250 caractères maximum.";
+    if (value.reference.length > 100) errors.reference = "100 caractères maximum.";
+    if (value.category && categoryFor(value.category)?.type !== "expense") errors.category = "Choisissez une catégorie de dépense valide.";
+    value.siret = value.siret.replace(/\s/g, "");
+    if (value.siret && !/^\d{14}$/.test(value.siret)) errors.siret = "Le SIRET doit contenir 14 chiffres.";
+  }
+  return { value, errors };
+}
+export function validateSupplier(input, state) {
+  const result = directoryContact(input, true);
+  if ((state?.suppliers || []).some(s => s.id !== result.value.id && fold(s.name) === fold(result.value.name)))
+    result.errors.name = "Ce nom court est déjà utilisé par un fournisseur.";
+  return result;
+}
+export function validateTenant(input) {
+  return directoryContact(input);
+}
+export function validateLease(input, state) {
+  const value = {
+    id: clean(input.id) || uid(), tenantId: clean(input.tenantId), propertyId: clean(input.propertyId),
+    startDate: clean(input.startDate), endDate: clean(input.endDate),
+    rentCents: input.rent !== undefined ? parseMoney(input.rent) : input.rentCents,
+    chargesCents: input.charges !== undefined ? parseMoney(input.charges || "0") : (input.chargesCents ?? 0),
+    depositCents: input.deposit !== undefined ? parseMoney(input.deposit || "0") : (input.depositCents ?? 0),
+    paymentDay: Number(input.paymentDay ?? 1), notes: clean(input.notes),
+  };
+  const errors = {};
+  if (value.id.length > 150) errors.id = "Identifiant trop long.";
+  if (!(state?.tenants || []).some(t => t.id === value.tenantId)) errors.tenantId = "Choisissez un locataire existant.";
+  if (!state?.properties.some(p => p.id === value.propertyId)) errors.propertyId = "Choisissez un bien existant.";
+  if (!validDate(value.startDate)) errors.startDate = "Choisissez une date d’entrée valide.";
+  if (value.endDate && (!validDate(value.endDate) || value.endDate < value.startDate)) errors.endDate = "La sortie doit suivre ou égaler l’entrée.";
+  for (const [field, cents] of [["rent", "rentCents"], ["charges", "chargesCents"], ["deposit", "depositCents"]])
+    if (!safeCents(value[cents]) || value[cents] < 0) errors[field] = "Saisissez un montant positif ou nul avec au plus 2 décimales.";
+  if (!Number.isInteger(value.paymentDay) || value.paymentDay < 1 || value.paymentDay > 31) errors.paymentDay = "Choisissez un jour entre 1 et 31.";
+  if (value.notes.length > 3000) errors.notes = "3 000 caractères maximum.";
+  if (!errors.startDate && !errors.endDate && (state?.leases || []).some(l =>
+    l.id !== value.id && l.propertyId === value.propertyId &&
+    l.startDate <= (value.endDate || "9999-12-31") && value.startDate <= (l.endDate || "9999-12-31")))
+    errors.startDate = "Une autre location occupe déjà ce bien sur cette période. Renseignez d’abord sa date de sortie.";
+  const previous = state?.leases?.find(l => l.id === value.id);
+  if (previous) {
+    if (previous.tenantId !== value.tenantId) errors.tenantId = "Conservez le locataire de cette location. Pour un changement d’occupant, créez une nouvelle location.";
+    if (previous.propertyId !== value.propertyId) errors.propertyId = "Conservez le bien de cette location. Pour un autre bien, créez une nouvelle location.";
+  }
+  return { value, errors };
+}
+export function validateBankCheck(input, state, { allowBeforeOpening = false } = {}) {
+  const value = { id: clean(input.id) || uid(), date: clean(input.date),
+    balanceCents: input.balance !== undefined ? parseMoney(input.balance, true) : input.balanceCents,
+    notes: clean(input.notes) };
+  const errors = {};
+  if (value.id.length > 150) errors.id = "Identifiant trop long.";
+  if (!validDate(value.date) || (!allowBeforeOpening && state?.settings?.openingDate && value.date < state.settings.openingDate)) errors.date = "Choisissez une date à partir du solde initial.";
+  if (!safeCents(value.balanceCents)) errors.balance = "Saisissez un solde valide avec au plus 2 décimales.";
+  if (value.notes.length > 3000) errors.notes = "3 000 caractères maximum.";
+  if ((state?.bankChecks || []).some(c => c.id !== value.id && c.date === value.date)) errors.date = "Un contrôle existe déjà à cette date. Modifiez-le.";
+  return { value, errors };
+}
+export function bankBalanceAt(state, date) {
+  if (!validDate(date)) throw new Error("La date du contrôle est invalide.");
+  if (date < state.settings.openingDate) return null;
+  return state.settings.openingBalanceCents + state.transactions.reduce((sum, t) => sum +
+    getPayments(t).filter(p => p.date >= state.settings.openingDate && p.date <= date)
+      .reduce((n,p) => n + (t.type === "income" ? p.amountCents : -p.amountCents), 0), 0);
+}
+function validateDirectoryLinks(input, value, errors, state) {
+  for (const [field, list] of [["supplierId", "suppliers"], ["tenantId", "tenants"], ["leaseId", "leases"]]) {
+    if (input[field] === undefined) continue;
+    value[field] = clean(input[field]);
+    if (typeof input[field] !== "string" || (value[field] && !(state[list] || []).some(item => item.id === value[field])))
+      errors[field] = "Cette fiche est introuvable.";
+  }
+  if (value.supplierId && (value.tenantId || value.leaseId)) errors.supplierId = "Choisissez un fournisseur ou un locataire pour cette opération.";
+  if (value.leaseId) {
+    const lease = state.leases?.find(l => l.id === value.leaseId);
+    if (lease && (lease.propertyId !== value.propertyId || lease.tenantId !== value.tenantId))
+      errors.leaseId = "La location doit correspondre au bien et au locataire sélectionnés.";
+  }
+  if (input.documentNotRequired !== undefined) {
+    value.documentNotRequired = input.documentNotRequired;
+    if (typeof value.documentNotRequired !== "boolean") errors.documentNotRequired = "Le choix du justificatif est invalide.";
+  }
+}
+function leaseRecurrenceDates(state, rule, from, to) {
+  const lease = state.leases?.find(l => l.id === rule.leaseId);
+  if (!lease) return recurrenceDates(rule, from, to);
+  // Bound the interval, not the rule anchor: a payment due on the 31st
+  // must remain due on the 31st even if a lease starts on the 10th.
+  return recurrenceDates(rule, from > lease.startDate ? from : lease.startDate,
+    lease.endDate && lease.endDate < to ? lease.endDate : to);
+}
 export function validateTransaction(input, state) {
   const value = {
     id: clean(input.id) || uid(),
@@ -322,6 +438,7 @@ export function validateTransaction(input, state) {
     notes: clean(input.notes),
   };
   const errors = {};
+  validateDirectoryLinks(input, value, errors, state);
   if (input.normalizedLabel !== undefined) {
     value.normalizedLabel = input.normalizedLabel === true;
     if (typeof input.normalizedLabel !== "boolean")
@@ -638,6 +755,10 @@ export function parseBackup(raw) {
     properties: [],
     transactions: [],
     recurrences: [],
+    suppliers: [],
+    tenants: [],
+    leases: [],
+    bankChecks: [],
   };
   const ids = new Set();
   for (const p of data.properties) {
@@ -662,6 +783,30 @@ export function parseBackup(raw) {
       fail("Un bien de la sauvegarde est invalide.");
     ids.add(p.id);
     state.properties.push(result.value);
+  }
+  for (const [key, validate, max] of [
+    ["suppliers", validateSupplier, 5000], ["tenants", validateTenant, 5000],
+    ["leases", validateLease, 10000], ["bankChecks", validateBankCheck, 5000],
+  ]) {
+    const entries = data[key] === undefined ? [] : data[key];
+    if (!Array.isArray(entries) || entries.length > max) fail(`La liste ${key} est invalide ou trop longue.`);
+    ids.clear();
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.id !== "string" || !entry.id || ids.has(entry.id))
+        fail(`Une fiche ${key} est invalide ou dupliquée.`);
+      if (["suppliers", "tenants"].includes(key) && typeof entry.archived !== "boolean") fail(`Le statut d’une fiche ${key} est invalide.`);
+      if (key === "leases" && (["rentCents", "chargesCents", "depositCents"].some(field => !safeCents(entry[field]) || entry[field] < 0) || !Number.isInteger(entry.paymentDay)))
+        fail("Les montants ou le jour d’échéance d’une location sont invalides.");
+      if (key === "bankChecks" && !safeCents(entry.balanceCents)) fail("Un solde de contrôle est invalide.");
+      // Moving the opening balance date must not discard older recorded
+      // statement balances; their comparison simply becomes unavailable.
+      const result = key === "bankChecks"
+        ? validateBankCheck(entry, state, { allowBeforeOpening: true })
+        : validate(entry, state);
+      if (Object.keys(result.errors).length) fail(`Une fiche ${key} est invalide : ${Object.values(result.errors).join(" ")}`);
+      ids.add(entry.id);
+      state[key].push(result.value);
+    }
   }
   ids.clear();
   for (const t of data.transactions) {
@@ -1044,6 +1189,12 @@ export function validateRecurrence(input, state) {
     generatedThrough: clean(input.generatedThrough),
   };
   const errors = {};
+  if (input.paymentDay !== undefined) {
+    value.paymentDay = Number(input.paymentDay);
+    if (!Number.isInteger(value.paymentDay) || value.paymentDay < 1 || value.paymentDay > 31)
+      errors.paymentDay = "Choisissez un jour entre 1 et 31.";
+  }
+  validateDirectoryLinks(input, value, errors, state);
   if (
     value.category !== "rent" &&
     ((input.rentCents !== undefined && input.rentCents !== 0) ||
@@ -1126,7 +1277,9 @@ export function recurrenceDates(rule, from, to) {
   const lower = from > start ? from : start;
   const upper = rule.endDate && rule.endDate < to ? rule.endDate : to;
   if (lower > upper) return [];
-  const [year, month, day] = start.split("-").map(Number);
+  const [year, month, startDay] = start.split("-").map(Number);
+  const day = rule.paymentDay ?? startDay;
+  if (!Number.isInteger(day) || day < 1 || day > 31) return [];
   const [fy, fm] = lower.split("-").map(Number);
   const step = recurrenceSteps[rule.frequency];
   let index = Math.max(0, Math.floor(((fy - year) * 12 + fm - month) / step));
@@ -1185,7 +1338,7 @@ export function generateRecurringTransactions(
     const from = rule.generatedThrough
       ? shiftDay(rule.generatedThrough, 1)
       : rule.startDate;
-    for (const date of recurrenceDates(rule, from, through)) {
+    for (const date of leaseRecurrenceDates(state, rule, from, through)) {
       const key = `${rule.id}:${date}`;
       if (occurrences.has(key)) continue;
       const id = `rec:${key}`;
@@ -1204,6 +1357,8 @@ export function generateRecurringTransactions(
         counterparty: rule.counterparty,
         reference: rule.reference || "",
         notes: rule.notes || "",
+        ...Object.fromEntries(["supplierId", "tenantId", "leaseId", "documentNotRequired"]
+          .filter(field => rule[field] !== undefined).map(field => [field, rule[field]])),
         ...(rule.category === "loan_payment"
           ? {
               capitalCents: rule.capitalCents,
@@ -1320,7 +1475,7 @@ export function getForecast(
       rule.generatedThrough && rule.generatedThrough >= today
         ? shiftDay(rule.generatedThrough, 1)
         : today;
-    for (const due of recurrenceDates(rule, from, last))
+    for (const due of leaseRecurrenceDates(state, rule, from, last))
       if (!existing.has(`${rule.id}:${due}`))
         add(rule.type, rule.amountCents, due);
   }

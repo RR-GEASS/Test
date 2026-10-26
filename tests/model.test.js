@@ -28,6 +28,7 @@ import {
   recordPaymentsBatch,
   getForecast,
   suggestedAllocation,
+  validateSupplier, validateTenant, validateLease, validateBankCheck, bankBalanceAt,
 } from "../src/model.js";
 const property = {
   id: "p1",
@@ -914,4 +915,138 @@ test("le CSV de trésorerie distingue la ventilation prévue du prêt des règle
   assert.deepEqual(optional.errors, {});
   assert.equal(optional.value.interestCents, 0);
   assert.equal(optional.value.insuranceCents, 0);
+});
+
+
+function directoryFixture() {
+  const s = fixture();
+  s.suppliers.push(validateSupplier({ id: "supplier-1", name: "Électricité", legalName: "Énergie Exemple", category: "other_expense", reference: "CONTRAT-1", archived: false }, s).value);
+  s.tenants.push(validateTenant({ id: "tenant-1", name: "Camille", email: "camille@example.test", archived: false }).value);
+  const lease = validateLease({ id: "lease-1", tenantId: "tenant-1", propertyId: "p1", startDate: "2026-01-10", endDate: "", rent: "800", charges: "50", deposit: "800", paymentDay: 31 }, s);
+  assert.deepEqual(lease.errors, {});
+  s.leases.push(lease.value);
+  return s;
+}
+test("les anciens dossiers restent lisibles sans inventer de contacts ou de locations", () => {
+  const old = fixture();
+  for (const key of ["suppliers", "tenants", "leases", "bankChecks"]) delete old[key];
+  const restored = parseBackup(old);
+  for (const key of ["suppliers", "tenants", "leases", "bankChecks"]) assert.deepEqual(restored[key], []);
+  assert.equal(restored.properties[0].tenant, "Locataire");
+  assert.throws(() => parseBackup({ ...old, suppliers: null }));
+});
+test("les fiches fournisseurs et locataires contrôlent coordonnées et noms sans fusionner les homonymes", () => {
+  const s = directoryFixture();
+  assert.ok(validateSupplier({ name: " electricite " }, s).errors.name);
+  assert.ok(validateSupplier({ name: "Autre", email: "invalide", siret: "123", category: "rent" }, s).errors.email);
+  assert.ok(validateSupplier({ name: "Autre", category: "rent" }, s).errors.category);
+  assert.deepEqual(validateTenant({ name: "Camille" }, s).errors, {});
+  assert.ok(validateTenant({ name: "Camille", archived: "false" }).errors.archived);
+  const restored = parseBackup(serializeBackup(s));
+  assert.deepEqual(restored.suppliers, s.suppliers);
+  assert.deepEqual(restored.tenants, s.tenants);
+  assert.deepEqual(restored.leases, s.leases);
+});
+test("une location conserve son bien et son locataire lorsqu’elle possède un historique", () => {
+  const s = directoryFixture();
+  const original = s.leases[0];
+  assert.ok(validateLease({ ...original, id: "lease-2" }, s).errors.startDate);
+  assert.ok(validateLease({ ...original, endDate: "2026-01-01" }, s).errors.endDate);
+  assert.ok(validateLease({ ...original, paymentDay: 32 }, s).errors.paymentDay);
+  s.tenants.push(validateTenant({ id: "tenant-2", name: "Alex" }).value);
+  s.transactions.push(tx({ tenantId: "tenant-1", leaseId: "lease-1" }));
+  assert.ok(validateLease({ ...original, tenantId: "tenant-2" }, s).errors.tenantId);
+  const ended = validateLease({ ...original, endDate: "2026-03-31" }, s);
+  assert.deepEqual(ended.errors, {});
+  s.leases[0] = ended.value;
+  assert.deepEqual(validateLease({ ...original, id: "lease-2", tenantId: "tenant-2", startDate: "2026-04-01" }, s).errors, {});
+  assert.equal(s.transactions[0].tenantId, "tenant-1");
+});
+test("les opérations gardent leur tiers historique et refusent les liens de fiches incohérents", () => {
+  const s = directoryFixture();
+  const input = { ...tx({ status: "pending" }), amount: "100,10", tenantId: "tenant-1", leaseId: "lease-1", counterparty: "Camille au jour du paiement", documentNotRequired: true };
+  const result = validateTransaction(input, s);
+  assert.deepEqual(result.errors, {});
+  s.transactions.push(result.value);
+  s.tenants[0].name = "Camille Nouveau";
+  assert.equal(parseBackup(serializeBackup(s)).transactions[0].counterparty, "Camille au jour du paiement");
+  assert.ok(validateTransaction({ ...input, supplierId: "supplier-1" }, s).errors.supplierId);
+  assert.ok(validateTransaction({ ...input, tenantId: "missing" }, s).errors.tenantId);
+  assert.ok(validateTransaction({ ...input, propertyId: "" }, s).errors.leaseId);
+  assert.ok(validateTransaction({ ...input, documentNotRequired: "true" }, s).errors.documentNotRequired);
+  const bad = structuredClone(s); bad.transactions[0].leaseId = "another-account";
+  assert.throws(() => parseBackup(bad));
+});
+test("les échéances liées respectent les dates de location et gardent le jour prévu", () => {
+  const s = directoryFixture();
+  const rule = validateRecurrence({ id: "lease-rule", type: "income", category: "rent", propertyId: "p1", tenantId: "tenant-1", leaseId: "lease-1", startDate: "2025-12-31", frequency: "monthly", rent: "800", charges: "50", counterparty: "Camille", documentNotRequired: true }, s);
+  assert.deepEqual(rule.errors, {});
+  s.recurrences.push(rule.value);
+  assert.equal(generateRecurringTransactions(s, "2026-02-28"), 2);
+  assert.deepEqual(s.transactions.map(t => t.date), ["2026-01-31", "2026-02-28"]);
+  for (const t of s.transactions) {
+    assert.equal(t.tenantId, "tenant-1"); assert.equal(t.leaseId, "lease-1"); assert.equal(t.documentNotRequired, true);
+  }
+  const history = structuredClone(s.transactions);
+  s.leases[0].endDate = "2026-03-15";
+  assert.equal(generateRecurringTransactions(s, "2026-04-30"), 0);
+  assert.deepEqual(s.transactions, history);
+  const forecast = getForecast(s, { today: "2026-03-01", months: 3 });
+  assert.equal(forecast.months.reduce((n,m) => n + m.income, 0), 0);
+  assert.deepEqual(parseBackup(serializeBackup(s)).recurrences[0].leaseId, "lease-1");
+});
+test("les contrôles bancaires comparent le solde au jour choisi et conservent les montants négatifs", () => {
+  const s = fixture();
+  s.transactions = [tx({ date: "2026-01-01", amountCents: 10000 }), tx({ id: "expense", type: "expense", category: "insurance", date: "2026-01-15", amountCents: 4000 }), tx({ id: "future", date: "2026-02-01", amountCents: 10000 }), tx({ id: "pending", date: "2026-01-02", status: "pending", amountCents: 99999 })];
+  assert.equal(bankBalanceAt(s, "2026-01-01"), 110000);
+  assert.equal(bankBalanceAt(s, "2026-01-31"), 106000);
+  assert.equal(bankBalanceAt(s, "2025-12-31"), null);
+  const check = validateBankCheck({ id: "check-1", date: "2026-01-31", balance: "-42,30", notes: "Solde du relevé" }, s);
+  assert.deepEqual(check.errors, {});
+  assert.equal(check.value.balanceCents, -4230);
+  s.bankChecks.push(check.value);
+  assert.ok(validateBankCheck({ date: "2026-01-31", balance: "0" }, s).errors.date);
+  assert.deepEqual(parseBackup(serializeBackup(s)).bankChecks, s.bankChecks);
+  const bad = structuredClone(s); bad.bankChecks[0].balanceCents = 1.2; bad.bankChecks[0].balance = "10";
+  assert.throws(() => parseBackup(bad));
+});
+
+
+test("un loyer au 31 démarré en février retrouve le 31 en mars et conserve son jour à la restauration", () => {
+  const s = directoryFixture();
+  s.leases[0].startDate = "2026-02-28";
+  const input = { id: "last-day", type: "income", category: "rent", propertyId: "p1", tenantId: "tenant-1", leaseId: "lease-1", startDate: "2026-02-28", frequency: "monthly", paymentDay: 31, rent: "800", charges: "50" };
+  const result = validateRecurrence(input, s);
+  assert.deepEqual(result.errors, {});
+  s.recurrences.push(result.value);
+  assert.deepEqual(recurrenceDates(result.value, "2026-02-01", "2026-04-30"), ["2026-02-28", "2026-03-31", "2026-04-30"]);
+  assert.equal(nextRecurrenceDate(result.value, "2026-03-01"), "2026-03-31");
+  generateRecurringTransactions(s, "2026-04-30");
+  assert.deepEqual(s.transactions.map(t => t.date), ["2026-02-28", "2026-03-31", "2026-04-30"]);
+  assert.equal(parseBackup(serializeBackup(s)).recurrences[0].paymentDay, 31);
+  assert.ok(validateRecurrence({ ...input, paymentDay: 32 }, s).errors.paymentDay);
+  assert.ok(validateRecurrence({ ...input, paymentDay: 1.5 }, s).errors.paymentDay);
+});
+
+
+test("l’identité d’une location enregistrée reste fixe même avant sa première opération", () => {
+  const s = directoryFixture();
+  s.tenants.push(validateTenant({ id: "tenant-2", name: "Autre occupant" }).value);
+  s.properties.push({ ...s.properties[0], id: "p2", name: "Autre bien" });
+  assert.equal(s.transactions.length, 0);
+  assert.equal(s.recurrences.length, 0);
+  assert.ok(validateLease({ ...s.leases[0], tenantId: "tenant-2" }, s).errors.tenantId);
+  assert.ok(validateLease({ ...s.leases[0], propertyId: "p2" }, s).errors.propertyId);
+  assert.deepEqual(validateLease({ ...s.leases[0], rent: "850", notes: "Loyer corrigé" }, s).errors, {});
+});
+test("déplacer le solde initial conserve les anciens contrôles sans inventer un solde calculé", () => {
+  const s = fixture();
+  s.bankChecks.push(validateBankCheck({ id: "old-check", date: "2026-02-28", balance: "500" }, s).value);
+  s.settings.openingDate = "2026-03-01";
+  const restored = parseBackup(serializeBackup(s));
+  assert.deepEqual(restored.bankChecks, s.bankChecks);
+  assert.equal(bankBalanceAt(restored, "2026-02-28"), null);
+  assert.ok(validateBankCheck({ date: "2026-02-27", balance: "500" }, restored).errors.date);
+  const bad = structuredClone(restored); bad.bankChecks[0].date = "2026-02-31";
+  assert.throws(() => parseBackup(bad));
 });

@@ -24,6 +24,7 @@ import {
   getForecast,
 } from "./model.js";
 import { icon, esc } from "./ui.js";
+import { createBankCheckUI } from "./bank-check-ui.js";
 const frequencies = [
   { id: "monthly", label: "Mensuelle" },
   { id: "quarterly", label: "Trimestrielle" },
@@ -52,7 +53,13 @@ export function createFinanceUI(ctx) {
     toast,
     confirmDialog,
   } = ctx;
+  const bankUI = createBankCheckUI(ctx);
   let pointingMonth = todayISO().slice(0, 7),
+    pointingProperty = "all",
+    pointingType = "all",
+    pointingRemaining = "all",
+    pointingDate = todayISO(),
+    pointingOwner = null,
     selected = new Set();
   const prop = (id) => getState().properties.find((p) => p.id === id);
   const propertyOptions = () => [
@@ -89,16 +96,22 @@ export function createFinanceUI(ctx) {
       ? "Vérifiez les montants"
       : money(parts.reduce((sum, part) => sum + part, 0));
   }
+  function nextDisplayedRecurrence(rule) {
+    const lease = (getState().leases || []).find(l => l.id === rule.leaseId);
+    const from = rule.generatedThrough && rule.generatedThrough >= todayISO() ? nextDay(rule.generatedThrough) : todayISO();
+    const end = lease?.endDate && (!rule.endDate || lease.endDate < rule.endDate) ? lease.endDate : rule.endDate;
+    return nextRecurrenceDate({...rule, endDate:end || ""}, lease?.startDate && lease.startDate > from ? lease.startDate : from);
+  }
   function renderRecurrences(content) {
     const rules = getState().recurrences || [];
-    content.innerHTML = `<div class="notice">${icon("calendar")}<span>Les échéances sont créées automatiquement jusqu’à la fin du mois courant, puis préparées à l’ouverture du mois suivant. Elles restent à pointer avant d’affecter la trésorerie. Une modification de périodicité s’applique aux échéances qui n’ont pas encore été créées.</span></div><div class="recurrence-grid">${rules.map((r) => `<article class="panel recurrence-card" data-testid="recurrence-card"><div class="recurrence-top"><span class="feature-icon ${r.type === "income" ? "green" : "amber"}">${icon(r.type)}</span><span class="status-pill ${r.active ? "paid" : "pending"}">${r.active ? "Active" : "En pause"}</span></div><h2>${esc(transactionLabel({ ...r, normalizedLabel: true, period: r.startDate.slice(0, 7) }, getState()))}</h2><strong class="recurrence-amount">${money(r.amountCents)} <small>/ ${frequencies.find((f) => f.id === r.frequency)?.label.toLowerCase()}</small></strong>${r.category === "rent" ? `<p>Loyer HC : ${money(r.rentCents)} · Provisions : ${money(r.chargesCents)}</p>` : r.category === "loan_payment" ? `<p>${loanSummary(r)}</p>` : ""}<dl><div><dt>Début</dt><dd>${shortDate(r.startDate)}</dd></div><div><dt>Fin</dt><dd>${r.endDate ? shortDate(r.endDate) : "Sans fin"}</dd></div><div><dt>Prochaine échéance à préparer</dt><dd>${r.active ? (nextRecurrenceDate(r, r.generatedThrough && r.generatedThrough >= todayISO() ? nextDay(r.generatedThrough) : todayISO()) ? shortDate(nextRecurrenceDate(r, r.generatedThrough && r.generatedThrough >= todayISO() ? nextDay(r.generatedThrough) : todayISO())) : "Terminée") : "En pause"}</dd></div></dl><div class="property-actions"><button class="text-link" data-action="edit-recurrence" data-id="${esc(r.id)}">${icon("edit")}Modifier</button><button class="text-link" data-action="pause-recurrence" data-id="${esc(r.id)}">${r.active ? "Pause" : "Reprendre"}</button><button class="text-link danger-text" data-action="delete-recurrence" data-id="${esc(r.id)}">Supprimer</button></div></article>`).join("") || '<div class="empty-state"><h2>Votre premier rendez-vous régulier</h2><p>Ajoutez un loyer, une assurance ou une échéance de prêt.</p></div>'}</div>`;
+    content.innerHTML = `<div class="notice">${icon("calendar")}<span>Les échéances sont créées automatiquement jusqu’à la fin du mois courant, puis préparées à l’ouverture du mois suivant. Elles restent à pointer avant d’affecter la trésorerie. Une modification de périodicité s’applique aux échéances qui n’ont pas encore été créées.</span></div><div class="recurrence-grid">${rules.map((r) => `<article class="panel recurrence-card" data-testid="recurrence-card"><div class="recurrence-top"><span class="feature-icon ${r.type === "income" ? "green" : "amber"}">${icon(r.type)}</span><span class="status-pill ${r.active ? "paid" : "pending"}">${r.active ? "Active" : "En pause"}</span></div><h2>${esc(transactionLabel({ ...r, normalizedLabel: true, period: r.startDate.slice(0, 7) }, getState()))}</h2><strong class="recurrence-amount">${money(r.amountCents)} <small>/ ${frequencies.find((f) => f.id === r.frequency)?.label.toLowerCase()}</small></strong>${r.category === "rent" ? `<p>Loyer HC : ${money(r.rentCents)} · Provisions : ${money(r.chargesCents)}</p>` : r.category === "loan_payment" ? `<p>${loanSummary(r)}</p>` : ""}<dl><div><dt>Début</dt><dd>${shortDate(r.startDate)}</dd></div><div><dt>Fin</dt><dd>${r.endDate ? shortDate(r.endDate) : "Sans fin"}</dd></div><div><dt>Prochaine échéance à préparer</dt><dd>${r.active ? (nextDisplayedRecurrence(r) ? shortDate(nextDisplayedRecurrence(r)) : "Terminée") : "En pause"}</dd></div></dl><div class="property-actions"><button class="text-link" data-action="edit-recurrence" data-id="${esc(r.id)}">${icon("edit")}Modifier</button><button class="text-link" data-action="pause-recurrence" data-id="${esc(r.id)}">${r.active ? "Pause" : "Reprendre"}</button><button class="text-link danger-text" data-action="delete-recurrence" data-id="${esc(r.id)}">Supprimer</button></div></article>`).join("") || '<div class="empty-state"><h2>Votre premier rendez-vous régulier</h2><p>Ajoutez un loyer, une assurance ou une échéance de prêt.</p></div>'}</div>`;
   }
   function nextDay(date) {
     const d = new Date(`${date}T12:00:00`);
     d.setDate(d.getDate() + 1);
     return todayISO(d);
   }
-  function recurrenceForm(id) {
+  function recurrenceForm(id, seed = {}) {
     if (!allowMutation()) return;
     const existing = getState().recurrences?.find((r) => r.id === id);
     const r = existing || {
@@ -116,6 +129,7 @@ export function createFinanceUI(ctx) {
       counterparty: "",
       active: true,
       generatedThrough: "",
+      ...seed,
     };
     const d = mountDialog(
       `<dialog class="form-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader(existing ? "Modifier la périodicité" : "Nouvelle périodicité", "Une seule saisie, des échéances préparées chaque mois.", "calendar")}<div class="form-grid">${selectField(
@@ -131,8 +145,25 @@ export function createFinanceUI(ctx) {
         "Catégorie",
         CATEGORIES.filter((c) => c.type === r.type),
         r.category,
-      )}${selectField("propertyId", "Bien", propertyOptions(), r.propertyId)}${selectField("frequency", "Fréquence", frequencies, r.frequency)}</div><div id="recurring-amounts"></div><div class="form-grid">${field("startDate", "Date de début *", r.startDate, "date", "required")}${field("endDate", "Date de fin", r.endDate, "date")}</div>${field("detail", "Détail", r.detail || "", "text", 'maxlength="160" placeholder="Ex. : Assurance propriétaire"')}${field("counterparty", "Fournisseur / bénéficiaire / locataire", r.counterparty || "", "text", 'maxlength="160"')}${field("reference", "Référence de facture", r.reference || "", "text", 'maxlength="100"')}<div class="form-field"><label for="field-notes">Note pour le comptable</label><textarea id="field-notes" name="notes" maxlength="3000" rows="3">${esc(r.notes || "")}</textarea><span class="field-error" data-error="notes"></span></div><p class="auto-label-preview" id="recurrence-preview"></p><p class="form-note">Le jour de la date de début est conservé à chaque période. Si ce jour n’existe pas, l’échéance tombe le dernier jour du mois. Pour un prêt, choisissez « Échéance de prêt » et renseignez la répartition capital, intérêts et assurance. Vous pourrez l’ajuster chaque mois dans « Pointage mensuel », d’après le tableau d’amortissement bancaire.</p><p class="form-note">Les échéances jusqu’à la fin du mois courant seront ajoutées en attente. Les échéances déjà créées ne seront pas modifiées.</p>${formFooter(existing ? "Enregistrer" : "Créer la périodicité")}</form></dialog>`,
+      )}${selectField("propertyId", "Bien", propertyOptions(), r.propertyId)}${selectField("frequency", "Fréquence", frequencies, r.frequency)}</div><div class="form-grid">${selectField("supplierId", "Fournisseur enregistré", [{id:"",label:"Aucun fournisseur"}, ...(getState().suppliers || []).filter(s => !s.archived || s.id === r.supplierId).map(s => ({id:s.id,label:s.name}))], r.supplierId || "")}${selectField("leaseId", "Location associée", [{id:"",label:"Aucune location"}, ...(getState().leases || []).filter(l => !l.endDate || l.endDate >= todayISO() || l.id === r.leaseId).map(l => ({id:l.id,label: `${prop(l.propertyId)?.name || "Bien"} · ${(getState().tenants || []).find(t => t.id === l.tenantId)?.name || "Locataire"}`}))], r.leaseId || "")}</div><input type="hidden" name="tenantId" value="${esc(r.tenantId || "")}"><p class="form-note">La location propose les montants du bail et son locataire. Le fournisseur propose sa catégorie habituelle.</p><div id="recurring-amounts"></div><div class="form-grid">${field("startDate", "Date de début *", r.startDate, "date", "required")}${field("endDate", "Date de fin", r.endDate, "date")}${field("paymentDay", "Jour d’échéance (1 à 31)", r.paymentDay || Number(r.startDate.slice(8,10)), "number", 'min="1" max="31" step="1" required')}</div>${field("detail", "Détail", r.detail || "", "text", 'maxlength="160" placeholder="Ex. : Assurance propriétaire"')}${field("counterparty", "Fournisseur / bénéficiaire / locataire", r.counterparty || "", "text", 'maxlength="160"')}${field("reference", "Référence de facture", r.reference || "", "text", 'maxlength="100"')}<div class="form-field"><label for="field-notes">Note pour le comptable</label><textarea id="field-notes" name="notes" maxlength="3000" rows="3">${esc(r.notes || "")}</textarea><span class="field-error" data-error="notes"></span></div><label class="check-label"><input type="checkbox" name="documentNotRequired" ${r.documentNotRequired ? "checked" : ""}>Justificatif non nécessaire pour ces échéances</label><p class="auto-label-preview" id="recurrence-preview"></p><p class="form-note">Le jour d’échéance choisi est conservé à chaque période. Si ce jour n’existe pas, l’échéance tombe le dernier jour du mois. Pour un prêt, choisissez « Échéance de prêt » et renseignez la répartition capital, intérêts et assurance. Vous pourrez l’ajuster chaque mois dans « Pointage mensuel », d’après le tableau d’amortissement bancaire.</p><p class="form-note">Les échéances jusqu’à la fin du mois courant seront ajoutées en attente. Les échéances déjà créées ne seront pas modifiées.</p>${formFooter(existing ? "Enregistrer" : "Créer la périodicité")}</form></dialog>`,
     );
+    let customPaymentDay = !!r.paymentDay;
+    d.querySelector("[name=paymentDay]").addEventListener("input", () => { customPaymentDay = true; });
+    d.querySelector("[name=startDate]").addEventListener("input", e => {
+      if (!customPaymentDay && e.target.value) d.querySelector("[name=paymentDay]").value = Number(e.target.value.slice(8,10));
+    });
+    const supplierSelect = d.querySelector("[name=supplierId]");
+    if (ctx.createSupplier) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "text-link";
+      button.textContent = "Créer un fournisseur";
+      supplierSelect.closest(".form-field").append(button);
+      button.addEventListener("click", () => ctx.createSupplier(supplier => {
+        supplierSelect.innerHTML = options([{id:"",label:"Aucun fournisseur"}, ...(getState().suppliers || []).filter(s => !s.archived || s.id === supplier.id).map(s => ({id:s.id,label:s.name}))], supplier.id);
+        supplierSelect.dispatchEvent(new Event("change"));
+      }));
+    }
     function amounts() {
       const oldAmount = d.querySelector("[name=amount]")?.value;
       const oldRent = d.querySelector("[name=rent]")?.value;
@@ -193,7 +224,13 @@ export function createFinanceUI(ctx) {
         getState(),
       );
     }
+    function clearLease() {
+      d.querySelector("[name=leaseId]").value = "";
+      d.querySelector("[name=tenantId]").value = "";
+    }
     d.querySelector("[name=type]").addEventListener("change", (e) => {
+      clearLease();
+      if (e.target.value !== "expense") d.querySelector("[name=supplierId]").value = "";
       d.querySelector("[name=category]").innerHTML = options(
         CATEGORIES.filter((c) => c.type === e.target.value),
         "",
@@ -202,6 +239,7 @@ export function createFinanceUI(ctx) {
     });
     d.querySelector("[name=category]").addEventListener("change", amounts);
     d.querySelector("[name=propertyId]").addEventListener("change", (e) => {
+      clearLease();
       const p = prop(e.target.value);
       if (p && d.querySelector("[name=rent]")) {
         d.querySelector("[name=rent]").value = moneyInput(p.rentCents);
@@ -209,6 +247,34 @@ export function createFinanceUI(ctx) {
         if (!d.querySelector("[name=counterparty]").value)
           d.querySelector("[name=counterparty]").value = p.tenant;
       }
+      preview();
+    });
+    d.querySelector("[name=supplierId]").addEventListener("change", (e) => {
+      const supplier = (getState().suppliers || []).find(s => s.id === e.target.value);
+      if (!supplier) return;
+      clearLease();
+      d.querySelector("[name=type]").value = "expense";
+      d.querySelector("[name=category]").innerHTML = options(CATEGORIES.filter(c => c.type === "expense"), supplier.category || "other_expense");
+      d.querySelector("[name=counterparty]").value = supplier.name;
+      amounts();
+    });
+    d.querySelector("[name=leaseId]").addEventListener("change", (e) => {
+      const lease = (getState().leases || []).find(l => l.id === e.target.value);
+      if (!lease) { d.querySelector("[name=tenantId]").value = ""; return; }
+      const tenant = (getState().tenants || []).find(t => t.id === lease.tenantId);
+      d.querySelector("[name=supplierId]").value = "";
+      d.querySelector("[name=tenantId]").value = lease.tenantId;
+      d.querySelector("[name=type]").value = "income";
+      d.querySelector("[name=category]").innerHTML = options(CATEGORIES.filter(c => c.type === "income"), "rent");
+      d.querySelector("[name=propertyId]").value = lease.propertyId;
+      d.querySelector("[name=counterparty]").value = tenant?.name || "";
+      d.querySelector("[name=startDate]").value = firstLeasePayment(lease);
+      d.querySelector("[name=paymentDay]").value = lease.paymentDay;
+      customPaymentDay = true;
+      d.querySelector("[name=endDate]").value = lease.endDate || "";
+      amounts();
+      d.querySelector("[name=rent]").value = moneyInput(lease.rentCents);
+      d.querySelector("[name=charges]").value = moneyInput(lease.chargesCents);
       preview();
     });
     d.querySelector("form").addEventListener("input", preview);
@@ -221,6 +287,7 @@ export function createFinanceUI(ctx) {
           id: r.id,
           active: r.active,
           generatedThrough: r.generatedThrough,
+          documentNotRequired: e.currentTarget.elements.documentNotRequired.checked,
         },
         getState(),
       );
@@ -242,6 +309,25 @@ export function createFinanceUI(ctx) {
       }
     });
   }
+  function firstLeasePayment(lease) {
+    const start = lease.startDate;
+    let [year, month] = start.split("-").map(Number);
+    const candidate = () => `${year}-${String(month).padStart(2,"0")}-${String(Math.min(lease.paymentDay || 1, new Date(year, month, 0).getDate())).padStart(2,"0")}`;
+    if (candidate() < start) { month++; if (month === 13) { month = 1; year++; } }
+    return candidate();
+  }
+  function createFromLease(leaseId) {
+    const lease = (getState().leases || []).find(l => l.id === leaseId);
+    if (!lease) return;
+    if (lease.endDate && firstLeasePayment(lease) > lease.endDate) {
+      toast("Cette location se termine avant sa première échéance. Saisissez le loyer au prorata dans les opérations.", true);
+      return;
+    }
+    recurrenceForm(undefined, { leaseId, tenantId: lease.tenantId, propertyId: lease.propertyId,
+      counterparty: (getState().tenants || []).find(t => t.id === lease.tenantId)?.name || "",
+      startDate: firstLeasePayment(lease), paymentDay: lease.paymentDay, endDate: lease.endDate || "", rentCents: lease.rentCents,
+      chargesCents: lease.chargesCents, amountCents: lease.rentCents + lease.chargesCents });
+  }
   function pointingRows(arrears = false) {
     return getState()
       .transactions.filter((t) =>
@@ -253,6 +339,9 @@ export function createFinanceUI(ctx) {
           : (t.occurrenceDate || t.dueDate || t.date).slice(0, 7) ===
             pointingMonth,
       )
+      .filter(t => (pointingProperty === "all" || t.propertyId === pointingProperty) &&
+        (pointingType === "all" || t.type === pointingType) &&
+        (pointingRemaining === "all" || remainingCents(t) > 0))
       .sort((a, b) =>
         (a.occurrenceDate || a.dueDate || a.date).localeCompare(
           b.occurrenceDate || b.dueDate || b.date,
@@ -260,10 +349,18 @@ export function createFinanceUI(ctx) {
       );
   }
   function renderPointing(content, arrears = false) {
+    const owner = getUser()?.id || "demo";
+    if (owner !== pointingOwner) {
+      pointingOwner = owner;
+      pointingProperty = "all";
+      pointingType = "all";
+      pointingRemaining = "all";
+      pointingDate = todayISO();
+    }
     selected.clear();
     const rows = pointingRows(arrears);
     const outstanding = rows.reduce((n, t) => n + remainingCents(t), 0);
-    content.innerHTML = `<div class="pointing-toolbar">${arrears ? `<div><strong>${money(outstanding)}</strong><span> de loyers et provisions restant à recevoir</span></div>` : `<div class="form-field"><label for="pointing-month">Mois à pointer</label><input type="month" id="pointing-month" aria-label="Mois à pointer" value="${pointingMonth}" max="${todayISO().slice(0, 7)}"></div>`}<div class="form-field"><label for="pointing-date">Date des règlements</label><input type="date" id="pointing-date" value="${todayISO()}"></div><button class="button primary" data-action="settle-batch" disabled>Valider les règlements</button></div><section class="panel"><div class="panel-heading"><div><h2>${arrears ? "Loyers échus non soldés" : "Votre pointage du mois"}</h2><p>Vérifiez les mouvements réels sur votre relevé. Les cases cochées seront soldées à la date choisie.</p></div><span id="selection-total">0 sélectionnée</span></div>${rows.length ? `<div class="table-scroll finance-scroll" tabindex="0" role="region" aria-label="Tableau défilant des données"><table class="ledger pointing-table"><thead><tr><th><input type="checkbox" id="select-all" aria-label="Tout sélectionner"></th><th>Opération / échéance</th><th>Attendu</th><th>Réglé</th><th>Reste</th><th>Statut</th><th>Actions</th></tr></thead><tbody>${rows.map((t) => `<tr data-testid="pointing-row"><td><input type="checkbox" data-point-id="${esc(t.id)}" aria-label="Sélectionner ${esc(transactionLabel(t, getState()))}" ${remainingCents(t) <= 0 ? "disabled" : ""}></td><td><strong>${esc(transactionLabel(t, getState()))}</strong><small>${shortDate(t.occurrenceDate || t.dueDate || t.date)}</small>${t.category === "loan_payment" ? `<small>${loanSummary(t)}</small>` : ""}${ctx.attachmentStatus.html(t.id)}</td><td>${money(t.amountCents)}</td><td>${money(paidCents(t))}</td><td><strong>${money(remainingCents(t))}</strong></td><td>${badge(t)}</td><td><div class="point-actions">${t.category === "loan_payment" ? `<button class="text-link" data-action="adjust-loan" data-id="${esc(t.id)}">Ajuster le prêt</button>` : ""}${remainingCents(t) > 0 ? `<button class="text-link" data-action="partial-payment" data-id="${esc(t.id)}">Paiement partiel</button>` : ""}<button class="text-link" data-action="payments-history" data-id="${esc(t.id)}">Règlements</button><button class="text-link" data-action="attachments" data-id="${esc(t.id)}">Justificatifs</button></div></td></tr>`).join("")}</tbody></table></div>` : '<div class="empty-state"><h3>Aucune échéance à afficher</h3><p>Vos opérations et périodicités apparaîtront ici.</p></div>'}</section><div class="accounting-note">${icon("check")}<p>Une validation groupée règle la totalité du reste dû. Pour un montant différent, utilisez « Paiement partiel ». Vous pouvez retrouver et annuler un règlement saisi par erreur dans « Règlements ».</p></div>`;
+    content.innerHTML = `<div class="pointing-toolbar">${arrears ? `<div><strong>${money(outstanding)}</strong><span> de loyers et provisions restant à recevoir</span></div>` : `<div class="form-field"><label for="pointing-month">Mois à pointer</label><input type="month" id="pointing-month" aria-label="Mois à pointer" value="${pointingMonth}" max="${todayISO().slice(0, 7)}"></div>`}<div class="form-field"><label for="pointing-date">Date des règlements</label><input type="date" id="pointing-date" value="${pointingDate}"></div><button class="button primary" data-action="settle-batch" disabled>Valider les règlements</button></div><div class="pointing-toolbar">${selectField("pointingProperty", "Bien à pointer", [{id:"all",label:"Tous les biens"}, ...propertyOptions()], pointingProperty)}${selectField("pointingType", "Sens des opérations", [{id:"all",label:"Encaissements et décaissements"},{id:"income",label:"Encaissements"},{id:"expense",label:"Décaissements"}], pointingType)}${selectField("pointingRemaining", "Échéances affichées", [{id:"all",label:"Toutes les échéances"},{id:"remaining",label:"Reste à pointer"}], pointingRemaining)}</div><section class="panel"><div class="panel-heading"><div><h2>${arrears ? "Loyers échus non soldés" : "Votre pointage du mois"}</h2><p>Vérifiez les mouvements réels sur votre relevé. Les cases cochées seront soldées à la date choisie.</p></div><span id="selection-total">0 sélectionnée</span></div>${rows.length ? `<div class="table-scroll finance-scroll" tabindex="0" role="region" aria-label="Tableau défilant des données"><table class="ledger pointing-table"><thead><tr><th><input type="checkbox" id="select-all" aria-label="Tout sélectionner"></th><th>Opération / échéance</th><th>Attendu</th><th>Réglé</th><th>Reste</th><th>Statut</th><th>Actions</th></tr></thead><tbody>${rows.map((t) => `<tr data-testid="pointing-row"><td><input type="checkbox" data-point-id="${esc(t.id)}" aria-label="Sélectionner ${esc(transactionLabel(t, getState()))}" ${remainingCents(t) <= 0 ? "disabled" : ""}></td><td><strong>${esc(transactionLabel(t, getState()))}</strong><small>${shortDate(t.occurrenceDate || t.dueDate || t.date)}</small>${t.category === "loan_payment" ? `<small>${loanSummary(t)}</small>` : ""}${ctx.attachmentStatus.html(t.id)}</td><td>${money(t.amountCents)}</td><td>${money(paidCents(t))}</td><td><strong>${money(remainingCents(t))}</strong></td><td>${badge(t)}</td><td><div class="point-actions">${t.category === "loan_payment" ? `<button class="text-link" data-action="adjust-loan" data-id="${esc(t.id)}">Ajuster le prêt</button>` : ""}${remainingCents(t) > 0 ? `<button class="text-link" data-action="partial-payment" data-id="${esc(t.id)}">Paiement partiel</button>` : ""}<button class="text-link" data-action="payments-history" data-id="${esc(t.id)}">Règlements</button><button class="text-link" data-action="attachments" data-id="${esc(t.id)}">Justificatifs</button></div></td></tr>`).join("")}</tbody></table></div>` : '<div class="empty-state"><h3>Aucune échéance à afficher</h3><p>Vos opérations et périodicités apparaîtront ici.</p></div>'}</section><div class="accounting-note">${icon("check")}<p>Une validation groupée règle la totalité du reste dû. Pour un montant différent, utilisez « Paiement partiel ». Vous pouvez retrouver et annuler un règlement saisi par erreur dans « Règlements ».</p></div>`;
     content
       .querySelector("#pointing-month")
       ?.addEventListener("change", (e) => {
@@ -275,6 +372,15 @@ export function createFinanceUI(ctx) {
           renderPointing(content, false);
         }
       });
+    content.querySelector("#pointing-date").addEventListener("change", e => { pointingDate = e.target.value; });
+    for (const name of ["pointingProperty", "pointingType", "pointingRemaining"]) {
+      content.querySelector(`[name=${name}]`).addEventListener("change", e => {
+        if (name === "pointingProperty") pointingProperty = e.target.value;
+        if (name === "pointingType") pointingType = e.target.value;
+        if (name === "pointingRemaining") pointingRemaining = e.target.value;
+        renderPointing(content, arrears);
+      });
+    }
     const boxes = [...content.querySelectorAll("[data-point-id]")];
     function selection() {
       const eligible = boxes.filter((b) => !b.disabled);
@@ -434,7 +540,7 @@ export function createFinanceUI(ctx) {
       return;
     }
     const d = mountDialog(
-      `<dialog class="form-dialog" aria-labelledby="dialog-title">${formHeader("Justificatifs", transactionLabel(t, getState()), "folder")}<div id="attachment-list">Chargement…</div><div class="form-field"><label for="attachment-file">Ajouter un justificatif</label><input id="attachment-file" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png"></div><p class="form-note">PDF, JPEG ou PNG · 5 Mo maximum par fichier · 20 fichiers par opération. Les pièces sont renommées selon le libellé de l’opération (extension conservée, numérotation si nécessaire). Leur nom original est gardé comme référence. Les pièces sont conservées côté serveur. L’export JSON de la SCI ne contient pas leurs fichiers : téléchargez-les ou sauvegardez la base serveur.</p><p class="finance-error" role="alert"></p><div class="dialog-footer"><button class="button secondary" data-close>Fermer</button></div></dialog>`,
+      `<dialog class="form-dialog" aria-labelledby="dialog-title">${formHeader("Justificatifs", transactionLabel(t, getState()), "folder")}<div id="attachment-list">Chargement…</div><div class="form-field"><label for="attachment-file">Ajouter un justificatif</label><input id="attachment-file" type="file" multiple accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png"></div><p class="form-note">PDF, JPEG ou PNG · 5 Mo maximum par fichier · 20 fichiers par opération. Les pièces sont renommées selon le libellé de l’opération (extension conservée, numérotation si nécessaire). Leur nom original est gardé comme référence. Les pièces sont conservées côté serveur. L’export JSON de la SCI ne contient pas leurs fichiers : téléchargez-les ou sauvegardez la base serveur.</p><p class="finance-error" role="alert"></p><div class="dialog-footer"><button class="button secondary" data-close>Fermer</button></div></dialog>`,
     );
     async function list() {
       const res = await fetch(
@@ -464,33 +570,28 @@ export function createFinanceUI(ctx) {
     d.querySelector("#attachment-file").addEventListener(
       "change",
       async (e) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+        const files = [...(e.target.files || [])];
+        if (!files.length) return;
         e.target.disabled = true;
-        try {
-          if (file.size > 5 * 1024 * 1024)
-            throw new Error("Le fichier dépasse 5 Mo.");
-          const r = await fetch(
-            `/api/transactions/${encodeURIComponent(id)}/attachments`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/octet-stream",
-                "X-File-Name": encodeURIComponent(file.name),
-              },
-              body: file,
-            },
-          );
-          const result = await r.json();
-          if (!r.ok) throw new Error(result.error || "Envoi impossible.");
-          await list();
-          toast("Le justificatif a été enregistré.");
-        } catch (error) {
-          errorIn(d, error);
-        } finally {
-          e.target.disabled = false;
-          e.target.value = "";
+        const failures = [];
+        let uploaded = 0;
+        d.querySelector(".finance-error").textContent = "";
+        for (const file of files) {
+          try {
+            if (file.size > 5 * 1024 * 1024) throw new Error("Le fichier dépasse 5 Mo.");
+            const response = await fetch(`/api/transactions/${encodeURIComponent(id)}/attachments`, {
+              method: "POST", headers: {"Content-Type":"application/octet-stream", "X-File-Name":encodeURIComponent(file.name)}, body:file,
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || "Envoi impossible.");
+            uploaded++;
+          } catch (error) { failures.push(`${file.name} : ${error.message}`); }
         }
+        try { await list(); } catch (error) { failures.push(error.message); }
+        if (uploaded) toast(`${uploaded} justificatif${uploaded > 1 ? "s ont été enregistrés" : " a été enregistré"}.`);
+        if (failures.length) errorIn(d, new Error(`${uploaded} fichier(s) enregistré(s). ${failures.join(" ")}`));
+        e.target.disabled = false;
+        e.target.value = "";
       },
     );
     try {
@@ -500,6 +601,7 @@ export function createFinanceUI(ctx) {
     }
   }
   function action(action, id) {
+    if (bankUI.action(action, id)) return true;
     if (action === "add-recurrence" || action === "edit-recurrence") {
       recurrenceForm(id);
       return true;
@@ -557,8 +659,11 @@ export function createFinanceUI(ctx) {
       if (view === "pointing") renderPointing(content);
       if (view === "arrears") renderPointing(content, true);
       if (view === "forecast") renderForecast(content);
+      if (view === "bank-checks") bankUI.render(content);
     },
     action,
     paymentForm,
+    recurrenceForm,
+    createFromLease,
   };
 }

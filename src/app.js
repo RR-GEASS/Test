@@ -37,9 +37,14 @@ import { icon, esc } from "./ui.js";
 import { api } from "./api.js";
 import { createAttachmentStatus } from "./attachment-status.js";
 import { createFinanceUI } from "./finance-ui.js";
+import { createDirectoryUI } from "./directory-ui.js";
+import { createEntityDocumentsUI } from "./entity-documents-ui.js";
+import "./directory.css";
 import { createExportUI } from "./export-ui.js";
 let exportUI;
 let financeUI;
+let directoryUI;
+let entityDocumentsUI;
 
 const app = document.querySelector("#app");
 const dialogRoot = document.querySelector("#dialog-root");
@@ -58,6 +63,7 @@ let user = null,
   query = "",
   status = "all",
   category = "all",
+  documentFilter = "all",
   pageNumber = 1,
   menuId = null,
   lastFocus,
@@ -71,8 +77,13 @@ try {
   /* Never load an invalid local demo as an authenticated account. */
 }
 document.documentElement.dataset.theme = theme;
-const attachmentStatus = createAttachmentStatus({ getUser: () => user });
+const attachmentStatus = createAttachmentStatus({ getUser: () => user, getState: () => state, onChange: () => { if (view === "transactions" && documentFilter !== "all" && document.querySelector("#ledger-results")) renderLedger(); } });
 const propertyFor = (id) => state.properties.find((p) => p.id === id);
+const activeLeaseFor = id => (state.leases || []).find(l => l.propertyId === id && l.startDate <= todayISO() && (!l.endDate || l.endDate >= todayISO()));
+const occupantFor = p => {
+  const lease = activeLeaseFor(p.id);
+  return lease ? state.tenants.find(t => t.id === lease.tenantId)?.name || "Locataire" : (state.leases || []).some(l => l.propertyId === p.id) ? "Aucune location en cours" : p.tenant || "Non renseigné";
+};
 const navItems = [
   ["dashboard", "grid", "Vue d’ensemble"],
   ["transactions", "receipt", "Opérations"],
@@ -81,6 +92,10 @@ const navItems = [
   ["arrears", "clock", "Loyers impayés"],
   ["forecast", "wallet", "Prévisionnel"],
   ["properties", "building", "Biens immobiliers"],
+  ["suppliers", "folder", "Fournisseurs"],
+  ["tenants", "lock", "Locataires"],
+  ["leases", "building", "Locations"],
+  ["bank-checks", "check", "Contrôle bancaire"],
   ["exports", "download", "Export comptable"],
   ["backups", "folder", "Sauvegardes"],
 ];
@@ -110,7 +125,7 @@ function houseArt(color = "#648bb0") {
 }
 
 function shell() {
-  app.innerHTML = `<div class="app-layout"><div class="sidebar-overlay" data-action="close-sidebar"></div><aside class="sidebar" aria-label="Navigation principale"><a class="brand" href="/" aria-label="Cap SCI, accueil"><span class="brand-symbol">${icon("building")}</span><span>cap<small>SCI</small></span></a><button class="workspace-label" data-action="settings" aria-label="Paramètres de la SCI"><span class="workspace-avatar">${icon("building")}</span><span class="workspace-name">${esc(state.settings.name)}<small>${esc(fiscalLabel())}</small></span>${icon("down")}</button><div class="nav-section-label">VOTRE ESPACE</div><nav>${navItems.map(([id, ico, label]) => `<button class="nav-item ${view === id ? "active" : ""}" data-view="${id}" ${view === id ? 'aria-current="page"' : ""}>${icon(ico)}<span>${label}</span>${id === "properties" ? `<span class="nav-count">${state.properties.filter((p) => !p.archived).length}</span>` : ""}</button>`).join("")}</nav><div class="sidebar-note"><span class="tiny-dot"></span>Suivi de trésorerie · ${esc(state.settings.taxRegime === "unknown" ? "régime à préciser" : state.settings.taxRegime)}</div><div class="sidebar-bottom"><div class="advisor-card">${icon("sparkle")}<strong>Les bons comptes,<br>l’esprit tranquille.</strong><p>Des opérations bien rangées pour travailler avec votre comptable.</p><button data-action="open-export">Dossier comptable ${icon("arrow")}</button></div><button class="theme-button" data-action="theme">${icon(theme === "dark" ? "sun" : "moon")} Mode ${theme === "dark" ? "clair" : "sombre"}</button><div class="account-footer">${icon(user ? "lock" : "circle")}<span>${user ? esc(user.email) : "Espace de démonstration"}</span>${user ? `<button class="icon-button" data-action="logout" aria-label="Se déconnecter">${icon("logout")}</button>` : ""}</div></div></aside><main class="main"><header class="topbar"><button class="mobile-menu icon-button" data-action="sidebar" aria-label="Ouvrir la navigation">${icon("menu")}</button><div class="breadcrumb">Mon patrimoine ${icon("chevron")}<span>${titleFor()}</span></div><div class="topbar-right"><span class="sync-indicator ${dirty ? "warning" : ""}">${icon(user ? "lock" : "circle")}<span>${saving ? "Enregistrement…" : dirty ? "Non enregistré" : user ? "Enregistré en ligne" : "Mode démonstration"}</span></span><button class="profile-button" data-action="${user ? "settings" : "auth"}" aria-label="${user ? "Paramètres de la SCI" : "Créer mon compte"}">${user ? esc(state.settings.name.charAt(0).toUpperCase()) : icon("plus")}</button></div></header><div class="workspace-content"><div id="notice-area"></div><div class="page-heading"><div><div class="eyebrow">VOTRE PATRIMOINE, EN TOUTE CLARTÉ</div><h1>${titleFor()}<span>.</span></h1><p>${{ recurrences: "Loyers, emprunts, assurances : vos rendez-vous réguliers.", pointing: "Un relevé, quelques cases cochées, des comptes à jour.", arrears: "Retrouvez les loyers et provisions qui restent à recevoir.", forecast: "Anticipez les 12 prochains mois, sans confondre prévu et réglé.", dashboard: "Les bons chiffres pour garder une longueur d’avance.", transactions: "Chaque mouvement, à sa place. Rien de plus, rien de moins.", properties: "Vos adresses, vos locataires, votre patrimoine.", exports: "Un dossier précis, complet et facile à transmettre.", backups: "Vos données vous appartiennent. Gardez-en une copie." }[view]}</p></div><button class="button primary" data-action="${view === "properties" ? "add-property" : view === "recurrences" ? "add-recurrence" : "add-transaction"}">${icon("plus")}${view === "properties" ? "Ajouter un bien" : view === "recurrences" ? "Nouvelle périodicité" : "Nouvelle opération"}</button></div><div id="page-content"></div><footer class="main-footer"><span>Cap SCI · Un patrimoine bien accompagné.</span><span>Suivi de trésorerie · ${esc(fiscalLabel())}</span></footer></div></main></div>`;
+  app.innerHTML = `<div class="app-layout"><div class="sidebar-overlay" data-action="close-sidebar"></div><aside class="sidebar" aria-label="Navigation principale"><a class="brand" href="/" aria-label="Cap SCI, accueil"><span class="brand-symbol">${icon("building")}</span><span>cap<small>SCI</small></span></a><button class="workspace-label" data-action="settings" aria-label="Paramètres de la SCI"><span class="workspace-avatar">${icon("building")}</span><span class="workspace-name">${esc(state.settings.name)}<small>${esc(fiscalLabel())}</small></span>${icon("down")}</button><div class="nav-section-label">VOTRE ESPACE</div><nav>${navItems.map(([id, ico, label]) => `<button class="nav-item ${view === id ? "active" : ""}" data-view="${id}" ${view === id ? 'aria-current="page"' : ""}>${icon(ico)}<span>${label}</span>${id === "properties" ? `<span class="nav-count">${state.properties.filter((p) => !p.archived).length}</span>` : ""}</button>`).join("")}</nav><div class="sidebar-note"><span class="tiny-dot"></span>Suivi de trésorerie · ${esc(state.settings.taxRegime === "unknown" ? "régime à préciser" : state.settings.taxRegime)}</div><div class="sidebar-bottom"><div class="advisor-card">${icon("sparkle")}<strong>Les bons comptes,<br>l’esprit tranquille.</strong><p>Des opérations bien rangées pour travailler avec votre comptable.</p><button data-action="open-export">Dossier comptable ${icon("arrow")}</button></div><button class="theme-button" data-action="theme">${icon(theme === "dark" ? "sun" : "moon")} Mode ${theme === "dark" ? "clair" : "sombre"}</button><div class="account-footer">${icon(user ? "lock" : "circle")}<span>${user ? esc(user.email) : "Espace de démonstration"}</span>${user ? `<button class="icon-button" data-action="logout" aria-label="Se déconnecter">${icon("logout")}</button>` : ""}</div></div></aside><main class="main"><header class="topbar"><button class="mobile-menu icon-button" data-action="sidebar" aria-label="Ouvrir la navigation">${icon("menu")}</button><div class="breadcrumb">Mon patrimoine ${icon("chevron")}<span>${titleFor()}</span></div><div class="topbar-right"><span class="sync-indicator ${dirty ? "warning" : ""}">${icon(user ? "lock" : "circle")}<span>${saving ? "Enregistrement…" : dirty ? "Non enregistré" : user ? "Enregistré en ligne" : "Mode démonstration"}</span></span><button class="profile-button" data-action="${user ? "settings" : "auth"}" aria-label="${user ? "Paramètres de la SCI" : "Créer mon compte"}">${user ? esc(state.settings.name.charAt(0).toUpperCase()) : icon("plus")}</button></div></header><div class="workspace-content"><div id="notice-area"></div><div class="page-heading"><div><div class="eyebrow">VOTRE PATRIMOINE, EN TOUTE CLARTÉ</div><h1>${titleFor()}<span>.</span></h1><p>${{ recurrences: "Loyers, emprunts, assurances : vos rendez-vous réguliers.", pointing: "Un relevé, quelques cases cochées, des comptes à jour.", arrears: "Retrouvez les loyers et provisions qui restent à recevoir.", forecast: "Anticipez les 12 prochains mois, sans confondre prévu et réglé.", dashboard: "Les bons chiffres pour garder une longueur d’avance.", transactions: "Chaque mouvement, à sa place. Rien de plus, rien de moins.", properties: "Vos adresses, vos locataires, votre patrimoine.", exports: "Un dossier précis, complet et facile à transmettre.", backups: "Vos données vous appartiennent. Gardez-en une copie.", suppliers: "Vos interlocuteurs, leurs coordonnées et leur historique.", tenants: "Les coordonnées et documents de vos locataires.", leases: "Chaque occupation, ses dates et son dossier.", "bank-checks": "Comparez votre suivi avec le solde du relevé bancaire." }[view]}</p></div><button class="button primary" data-action="${({ properties: "add-property", recurrences: "add-recurrence", suppliers: "add-supplier", tenants: "add-tenant", leases: "add-lease", "bank-checks": "add-bank-check" })[view] || "add-transaction"}">${icon("plus")}${({ properties: "Ajouter un bien", recurrences: "Nouvelle périodicité", suppliers: "Ajouter un fournisseur", tenants: "Ajouter un locataire", leases: "Nouvelle location", "bank-checks": "Nouveau contrôle" })[view] || "Nouvelle opération"}</button></div><div id="page-content"></div><footer class="main-footer"><span>Cap SCI · Un patrimoine bien accompagné.</span><span>Suivi de trésorerie · ${esc(fiscalLabel())}</span></footer></div></main></div>`;
   renderNotices();
   renderPage();
 }
@@ -142,6 +157,7 @@ function renderPage() {
   if (view === "backups") renderBackups(content);
   if (view === "exports") exportUI.render(content);
   financeUI.render(view, content);
+  directoryUI.render(view, content);
   if (["dashboard", "transactions", "pointing", "arrears"].includes(view)) void attachmentStatus.refresh();
   document.querySelector("#year-filter")?.addEventListener("change", (e) => {
     year = Number(e.target.value);
@@ -172,6 +188,7 @@ function renderPage() {
       pageNumber = 1;
       renderLedger();
     });
+  document.querySelector("#document-filter")?.addEventListener("change", (e) => { documentFilter = e.target.value; pageNumber = 1; renderLedger(); });
   document
     .querySelector("#import-file")
     ?.addEventListener("change", importFile);
@@ -247,7 +264,7 @@ function renderTransactions(content) {
       { id: "pending", label: "En attente" },
     ],
     status,
-  )}</select><select id="category-filter" aria-label="Filtrer par catégorie">${options([{ id: "all", label: "Toutes les catégories" }, ...CATEGORIES], category)}</select><button class="text-link" data-action="reset-filters">Réinitialiser</button></div><div id="ledger-results"></div></section>`;
+  )}</select><select id="category-filter" aria-label="Filtrer par catégorie">${options([{ id: "all", label: "Toutes les catégories" }, ...CATEGORIES], category)}</select><select id="document-filter" aria-label="Filtrer les justificatifs">${options([{id:"all",label:"Tous les justificatifs"},{id:"missing",label:"Justificatifs manquants"},{id:"attached",label:"Avec justificatif"},{id:"not-required",label:"Justificatif non nécessaire"}],documentFilter)}</select><button class="text-link" data-action="reset-filters">Réinitialiser</button></div><div id="ledger-results"></div></section>`;
   renderLedger();
 }
 function renderLedger() {
@@ -257,7 +274,7 @@ function renderLedger() {
     query,
     status,
     category,
-  });
+  }).filter(t => documentFilter === "all" || (documentFilter === "not-required" ? t.documentNotRequired : documentFilter === "missing" ? !t.documentNotRequired && attachmentStatus.count(t.id) === 0 : (attachmentStatus.count(t.id) ?? 0) > 0));
   const pages = Math.max(1, Math.ceil(rows.length / 12));
   pageNumber = Math.min(pageNumber, pages);
   document.querySelector("#ledger-results").innerHTML =
@@ -266,7 +283,7 @@ function renderLedger() {
 function renderProperties(content) {
   const active = state.properties.filter((p) => !p.archived);
   const rent = active.reduce((n, p) => n + p.rentCents, 0);
-  content.innerHTML = `<div class="property-summary"><span>${icon("building")}<b>${active.length}</b> bien${active.length !== 1 ? "s" : ""} actif${active.length !== 1 ? "s" : ""}</span><span>Loyers mensuels de référence <strong>${money(rent)}</strong><small>Hors charges · ne constitue pas un encaissement</small></span></div><div class="properties-grid">${state.properties.map((p, i) => `<article class="property-card ${p.archived ? "archived" : ""}" data-testid="property-card"><div class="property-illustration tone-${i % 3}">${houseArt(["#648bb0", "#8caa94", "#c0a176"][i % 3])}<span>${p.archived ? "Archivé" : "Bien locatif"}</span></div><div class="property-body"><h2>${esc(p.name)}</h2><p class="address">${esc(p.address || "Adresse à renseigner")}</p><div class="tenant">${icon("lock")}<span>Locataire<strong>${esc(p.tenant || "Non renseigné")}</strong></span></div><div class="rent-details"><div><span>Loyer mensuel HC</span><strong>${money(p.rentCents)}</strong></div><div><span>Provisions / mois</span><strong>${money(p.chargesCents)}</strong></div></div><div class="property-actions"><button class="text-link" data-action="edit-property" data-id="${esc(p.id)}">${icon("edit")}Modifier</button><button class="text-link muted" data-action="archive-property" data-id="${esc(p.id)}">${p.archived ? "Réactiver" : "Archiver"}</button></div></div></article>`).join("")}<button class="new-property-card" data-action="add-property">${icon("plus")}<strong>Une nouvelle adresse ?</strong><span>Ajouter un bien à votre patrimoine</span></button></div><div class="accounting-note">${icon("folder")}<p>Archiver un bien conserve son historique. Les opérations restent visibles dans le journal et les exports. Utilisez le nom court pour retrouver chaque bien. Configurez les loyers dans « Opérations périodiques » pour préparer les échéances, puis pointez les règlements.</p></div>`;
+  content.innerHTML = `<div class="property-summary"><span>${icon("building")}<b>${active.length}</b> bien${active.length !== 1 ? "s" : ""} actif${active.length !== 1 ? "s" : ""}</span><span>Loyers mensuels de référence <strong>${money(rent)}</strong><small>Hors charges · ne constitue pas un encaissement</small></span></div><div class="properties-grid">${state.properties.map((p, i) => `<article class="property-card ${p.archived ? "archived" : ""}" data-testid="property-card"><div class="property-illustration tone-${i % 3}">${houseArt(["#648bb0", "#8caa94", "#c0a176"][i % 3])}<span>${p.archived ? "Archivé" : "Bien locatif"}</span></div><div class="property-body"><h2>${esc(p.name)}</h2><p class="address">${esc(p.address || "Adresse à renseigner")}</p><div class="tenant">${icon("lock")}<span>Locataire<strong>${esc(occupantFor(p))}</strong></span></div><div class="rent-details"><div><span>Loyer mensuel HC</span><strong>${money(p.rentCents)}</strong></div><div><span>Provisions / mois</span><strong>${money(p.chargesCents)}</strong></div></div><div class="property-actions"><button class="text-link" data-action="edit-property" data-id="${esc(p.id)}">${icon("edit")}Modifier</button><button class="text-link muted" data-action="archive-property" data-id="${esc(p.id)}">${p.archived ? "Réactiver" : "Archiver"}</button></div></div></article>`).join("")}<button class="new-property-card" data-action="add-property">${icon("plus")}<strong>Une nouvelle adresse ?</strong><span>Ajouter un bien à votre patrimoine</span></button></div><div class="accounting-note">${icon("folder")}<p>Archiver un bien conserve son historique. Les opérations restent visibles dans le journal et les exports. Utilisez le nom court pour retrouver chaque bien. Configurez les loyers dans « Opérations périodiques » pour préparer les échéances, puis pointez les règlements.</p></div>`;
 }
 function renderBackups(content) {
   content.innerHTML = `<div class="backup-intro"><span class="backup-illustration">${icon("lock")}</span><h2>Votre SCI vous suit.<br>Vos données restent à vous.</h2><p>${user ? "Vos données sont enregistrées sur le serveur de votre compte. Une sauvegarde JSON permet aussi de conserver une copie indépendante." : "Explorez librement la démonstration. Créez un compte pour enregistrer votre SCI sur le serveur et la retrouver sur plusieurs appareils."}</p></div><div class="backup-grid"><section class="panel backup-card"><span class="feature-icon purple">${icon("download")}</span><h2>Une copie complète</h2><p>Biens, périodicités, opérations, règlements et paramètres réunis en JSON. Les fichiers justificatifs sont exclus : téléchargez-les séparément ou sauvegardez la base serveur.</p><button class="button primary" data-action="json">${icon("download")}Télécharger la sauvegarde</button></section><section class="panel backup-card"><span class="feature-icon green">${icon("upload")}</span><h2>Reprendre une sauvegarde</h2><p>Restaurez un fichier Cap SCI. Un aperçu et une confirmation précèdent le remplacement de vos données.</p><button class="button secondary" data-action="import">${icon("upload")}Importer une sauvegarde</button><input id="import-file" type="file" accept=".json,application/json" hidden></section><section class="panel backup-card"><span class="feature-icon amber">${icon("receipt")}</span><h2>Pour votre comptable</h2><p>Choisissez une plage de dates, les opérations et les justificatifs à transmettre. Le dossier ZIP contient des CSV détaillés et les pièces classées par bien. Ce dossier n’est pas un FEC.</p><button class="button secondary" data-action="open-export">${icon("download")}Préparer un dossier comptable</button></section><section class="panel backup-card"><span class="feature-icon blue">${icon(user ? "building" : "lock")}</span><h2>${user ? "Votre espace personnel" : "Votre SCI, sur tous vos écrans"}</h2><p>${user ? `Connecté en tant que ${esc(user.email)}. Pour accéder à vos données ailleurs, connectez-vous à la même adresse du site avec ce compte.` : "Créez votre espace avec un e-mail et un mot de passe. Le compte démarre sans données de démonstration."}</p><button class="button secondary" data-action="${user ? "settings" : "auth"}">${icon(user ? "settings" : "plus")}${user ? "Paramètres de ma SCI" : "Créer mon compte"}</button></section></div><div class="notice">${icon("folder")}<span>Le fichier JSON contient les informations de votre SCI et de vos locataires. Conservez-le dans un emplacement privé. La synchronisation ne remplace pas une sauvegarde indépendante.</span></div>`;
@@ -346,7 +363,7 @@ function operationMenu(id, button) {
   menu.id = "operation-menu";
   menu.className = "operation-menu";
   menu.setAttribute("role", "menu");
-  menu.innerHTML = `<button role="menuitem" data-action="edit-transaction" data-id="${esc(id)}">${icon("edit")}Modifier</button><button role="menuitem" data-action="toggle-paid" data-id="${esc(id)}">${icon(t.status === "paid" ? "clock" : "check")}${remainingCents(t) > 0 ? "Enregistrer un règlement" : "Voir les règlements"}</button><button role="menuitem" data-action="attachments" data-id="${esc(id)}">${icon("folder")}Justificatifs</button><div class="menu-divider"></div><button class="danger-text" role="menuitem" data-action="delete-transaction" data-id="${esc(id)}">${icon("trash")}Supprimer</button>`;
+  menu.innerHTML = `<button role="menuitem" data-action="duplicate-transaction" data-id="${esc(id)}">${icon("plus")}Dupliquer</button><button role="menuitem" data-action="edit-transaction" data-id="${esc(id)}">${icon("edit")}Modifier</button><button role="menuitem" data-action="toggle-paid" data-id="${esc(id)}">${icon(t.status === "paid" ? "clock" : "check")}${remainingCents(t) > 0 ? "Enregistrer un règlement" : "Voir les règlements"}</button><button role="menuitem" data-action="attachments" data-id="${esc(id)}">${icon("folder")}Justificatifs</button><div class="menu-divider"></div><button class="danger-text" role="menuitem" data-action="delete-transaction" data-id="${esc(id)}">${icon("trash")}Supprimer</button>`;
   document.body.append(menu);
   const r = button.getBoundingClientRect();
   menu.style.left = `${Math.max(8, Math.min(r.right - 235, innerWidth - 243))}px`;
@@ -356,28 +373,42 @@ function operationMenu(id, button) {
   button.setAttribute("aria-expanded", "true");
   menu.querySelector("button").focus();
 }
+const dialogFocus = new WeakMap();
 function closeDialog() {
-  dialogRoot.querySelector("dialog")?.close();
-  dialogRoot.innerHTML = "";
-  if (lastFocus?.isConnected) lastFocus.focus();
+  const d = [...dialogRoot.querySelectorAll("dialog")].at(-1);
+  if (!d) return;
+  const focus = dialogFocus.get(d);
+  d.close();
+  d.remove();
+  if (focus?.isConnected) focus.focus();
+}
+function requestCloseDialog(d) {
+  if (d.querySelector("form")?.dataset.changed === "true") {
+    const guard = mountDialog(`<dialog class="confirm-dialog" aria-labelledby="discard-title"><h2 id="discard-title">Abandonner les modifications ?</h2><p>La saisie de cette fenêtre n’a pas encore été enregistrée.</p><div class="dialog-footer"><button type="button" class="button secondary" data-close>Continuer la saisie</button><button type="button" class="button danger" id="discard-form">Abandonner</button></div></dialog>`);
+    guard.querySelector("#discard-form").addEventListener("click", () => { closeDialog(); closeDialog(); });
+  } else closeDialog();
 }
 function mountDialog(html) {
-  lastFocus = menuId
-    ? document.querySelector(
-        `[data-action="operation-menu"][data-id="${CSS.escape(menuId)}"]`,
-      )
-    : document.activeElement;
+  const focus = menuId ? document.querySelector(`[data-action="operation-menu"][data-id="${CSS.escape(menuId)}"]`) : document.activeElement;
   closeMenu();
-  dialogRoot.innerHTML = html;
-  const d = dialogRoot.querySelector("dialog");
-  d.showModal();
-  d.addEventListener("cancel", (e) => {
-    e.preventDefault();
-    closeDialog();
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const d = template.content.querySelector("dialog");
+  const namespace = `dialog-${uid()}`;
+  const remapped = new Map();
+  d.querySelectorAll("[id]").forEach(el => { if (el.id === "dialog-title" || el.id.startsWith("field-")) { const old = el.id; el.id = `${namespace}-${old}`; remapped.set(old, el.id); } });
+  [d, ...d.querySelectorAll("[for],[aria-labelledby],[aria-describedby]")].forEach(el => {
+    for (const attr of ["for", "aria-labelledby", "aria-describedby"]) {
+      if (el.hasAttribute(attr)) el.setAttribute(attr, el.getAttribute(attr).split(" ").map(id => remapped.get(id) || id).join(" "));
+    }
   });
-  d.querySelectorAll("[data-close]").forEach((b) =>
-    b.addEventListener("click", closeDialog),
-  );
+  dialogRoot.append(d);
+  dialogFocus.set(d, focus);
+  d.showModal();
+  d.addEventListener("cancel", e => { e.preventDefault(); requestCloseDialog(d); });
+  d.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () => requestCloseDialog(d)));
+  d.querySelector("form")?.addEventListener("input", e => { e.currentTarget.dataset.changed = "true"; });
+  d.querySelector("form")?.addEventListener("change", e => { e.currentTarget.dataset.changed = "true"; });
   return d;
 }
 const field = (name, label, value = "", type = "text", attrs = "") =>
@@ -425,10 +456,11 @@ function allowMutation() {
   }
   return true;
 }
-function transactionForm(id) {
+function transactionForm(id, duplicateId) {
   if (!allowMutation()) return;
   const existing = state.transactions.find((t) => t.id === id);
-  const t = existing || {
+  const source = state.transactions.find(t => t.id === duplicateId);
+  const t = existing || (source ? { ...structuredClone(source), id: uid(), date: todayISO(), dueDate: "", period: todayISO().slice(0,7), status: "pending", payments: [], reference: "", recurrenceId: "", occurrenceDate: "" } : null) || {
     id: uid(),
     date: todayISO(),
     type: "income",
@@ -468,9 +500,42 @@ function transactionForm(id) {
         { id: "paid", label: "Réglée" },
       ],
       t.status,
-    )}${field("counterparty", "Fournisseur / bénéficiaire / locataire", t.counterparty, "text", 'maxlength="160"')}${field("reference", "Référence de facture", t.reference, "text", 'maxlength="100"')}</div><div class="form-field"><label for="field-notes">Note pour le comptable</label><textarea name="notes" id="field-notes" rows="2" maxlength="3000">${esc(t.notes)}</textarea><span class="field-error" data-error="notes"></span></div><p class="form-note">« Réglée » confirme un règlement total à la date indiquée. Pour un paiement partiel, enregistrez d’abord l’échéance en attente puis utilisez le pointage. Les règlements existants se gèrent dans « Règlements ».</p>${formFooter(existing ? "Enregistrer" : "Ajouter l’opération")}</form></dialog>`,
+    )}${field("counterparty", "Fournisseur / bénéficiaire / locataire", t.counterparty, "text", 'maxlength="160" list="known-counterparties"')}${field("reference", "Référence de facture", t.reference, "text", 'maxlength="100"')}</div><div id="operation-parties"></div><datalist id="known-counterparties">${[...new Set(state.transactions.map(row => row.counterparty).filter(Boolean))].map(name => `<option value="${esc(name)}"></option>`).join("")}</datalist><label class="check-label"><input type="checkbox" name="documentNotRequired" ${t.documentNotRequired ? "checked" : ""}>Justificatif non nécessaire</label><div class="form-field"><label for="field-notes">Note pour le comptable</label><textarea name="notes" id="field-notes" rows="2" maxlength="3000">${esc(t.notes)}</textarea><span class="field-error" data-error="notes"></span></div><p class="form-note">« Réglée » confirme un règlement total à la date indiquée. Pour un paiement partiel, enregistrez d’abord l’échéance en attente puis utilisez le pointage. Les règlements existants se gèrent dans « Règlements ».</p>${formFooter(existing ? "Enregistrer" : "Ajouter l’opération")}</form></dialog>`,
   );
   const form = d.querySelector("form");
+  let selectedSupplier = t.supplierId || "", selectedLease = t.leaseId || "";
+  function parties() {
+    const suppliers = (state.suppliers || []).filter(s => !s.archived || s.id === selectedSupplier);
+    const property = form.elements.propertyId.value;
+    const leases = (state.leases || []).filter(l => (!property || l.propertyId === property) && (!l.endDate || l.endDate >= form.elements.date.value || l.id === selectedLease));
+    if (!leases.some(l => l.id === selectedLease)) selectedLease = "";
+    d.querySelector("#operation-parties").innerHTML = `<div class="form-grid">${selectField("supplierId", "Fournisseur enregistré", [{id:"",label:"Aucun / saisie libre"},...suppliers.map(s => ({id:s.id,label:s.name}))],selectedSupplier)}${selectField("leaseId", "Location / locataire", [{id:"",label:"Aucune / saisie libre"},...leases.map(l => ({id:l.id,label:`${state.tenants.find(n => n.id === l.tenantId)?.name || "Locataire"} · ${propertyFor(l.propertyId)?.name || "Bien"} · ${l.startDate}`}))], selectedLease)}</div><button type="button" class="text-link" id="inline-supplier">Créer un fournisseur</button>`;
+    form.elements.supplierId.addEventListener("change", () => {
+      selectedSupplier = form.elements.supplierId.value;
+      const supplier = suppliers.find(s => s.id === selectedSupplier);
+      if (supplier) {
+        selectedLease = ""; form.elements.leaseId.value = "";
+        form.elements.counterparty.value = supplier.name;
+        if (supplier.category && categoryFor(supplier.category)?.type === form.elements.type.value) { form.elements.category.value = supplier.category; amounts(); }
+      }
+    });
+    form.elements.leaseId.addEventListener("change", () => {
+      selectedLease = form.elements.leaseId.value;
+      const lease = state.leases.find(l => l.id === selectedLease);
+      if (lease) {
+        selectedSupplier = ""; form.elements.supplierId.value = "";
+        form.elements.propertyId.value = lease.propertyId;
+        form.elements.counterparty.value = state.tenants.find(n => n.id === lease.tenantId)?.name || "";
+        if (form.elements.rent) { form.elements.rent.value = moneyInput(lease.rentCents); form.elements.charges.value = moneyInput(lease.chargesCents); }
+        preview();
+      }
+    });
+    d.querySelector("#inline-supplier").addEventListener("click", () => directoryUI.supplierForm(undefined, supplier => {
+      selectedSupplier = supplier.id; parties(); form.elements.supplierId.dispatchEvent(new Event("change", {bubbles:true}));
+    }));
+  }
+  parties();
+  let acceptedDuplicate = "";
   function preview() {
     const total = d.querySelector("#loan-total");
     if (total) {
@@ -545,6 +610,7 @@ function transactionForm(id) {
       if (!d.querySelector("[name=counterparty]").value)
         d.querySelector("[name=counterparty]").value = p.tenant;
     }
+    parties();
     preview();
   });
   form.addEventListener("input", preview);
@@ -562,6 +628,8 @@ function transactionForm(id) {
         ...values,
         id: t.id,
         normalizedLabel: d.querySelector("#standard-label").checked,
+        documentNotRequired: form.elements.documentNotRequired.checked,
+        tenantId: state.leases?.find(l => l.id === values.leaseId)?.tenantId || "",
         rentCents: values.category === "rent" ? t.rentCents : 0,
         chargesCents: values.category === "rent" ? t.chargesCents : 0,
         capitalCents: values.category === "loan_payment" ? t.capitalCents : 0,
@@ -573,6 +641,14 @@ function transactionForm(id) {
       state,
     );
     if (showErrors(d, result.errors)) return;
+    const v = result.value;
+    const duplicates = state.transactions.filter(row => row.id !== v.id && ((v.reference && fold(row.reference) === fold(v.reference) && fold(row.counterparty) === fold(v.counterparty)) || (row.date === v.date && row.amountCents === v.amountCents && row.propertyId === v.propertyId && row.type === v.type && row.category === v.category)));
+    const fingerprint = JSON.stringify(v);
+    if (duplicates.length && acceptedDuplicate !== fingerprint) {
+      acceptedDuplicate = fingerprint;
+      showErrors(d, { duplicate: "Une opération semblable existe déjà. Vérifiez la date, le montant et la référence. Cliquez de nouveau sur Enregistrer / Ajouter pour confirmer cette saisie." });
+      return;
+    }
     if (existing)
       state.transactions = state.transactions.map((row) =>
         row.id === id ? result.value : row,
@@ -600,7 +676,7 @@ function propertyForm(id) {
     archived: false,
   };
   const d = mountDialog(
-    `<dialog class="form-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader(existing ? "Modifier le bien" : "Ajouter un bien", "Une nouvelle adresse dans votre espace.", "building")}${field("name", "Nom court du bien *", p.name, "text", 'maxlength="100" required autofocus placeholder="Ex. : Appartement du centre"')}${field("address", "Adresse", p.address, "text", 'maxlength="250"')}${field("tenant", "Locataire", p.tenant, "text", 'maxlength="160"')}<div class="form-grid">${field("rent", "Loyer mensuel hors charges (€)", moneyInput(p.rentCents), "text", 'inputmode="decimal"')}${field("charges", "Provisions mensuelles (€)", moneyInput(p.chargesCents), "text", 'inputmode="decimal"')}</div><p class="form-note">Ces montants sont des références. Ils ne génèrent pas automatiquement de quittance ou d’opération.</p>${formFooter(existing ? "Enregistrer" : "Ajouter le bien")}</form></dialog>`,
+    `<dialog class="form-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader(existing ? "Modifier le bien" : "Ajouter un bien", "Une nouvelle adresse dans votre espace.", "building")}${field("name", "Nom court du bien *", p.name, "text", 'maxlength="100" required autofocus placeholder="Ex. : Appartement du centre"')}${field("address", "Adresse", p.address, "text", 'maxlength="250"')}${field("tenant", "Locataire", p.tenant, "text", 'maxlength="160"')}<div class="form-grid">${field("rent", "Loyer mensuel hors charges (€)", moneyInput(p.rentCents), "text", 'inputmode="decimal"')}${field("charges", "Provisions mensuelles (€)", moneyInput(p.chargesCents), "text", 'inputmode="decimal"')}</div><p class="form-note">Ces montants sont des références. Pour conserver les changements de locataire, créez les fiches dans « Locataires » puis les occupations dans « Locations ». Le loyer périodique se prépare depuis la location.</p>${formFooter(existing ? "Enregistrer" : "Ajouter le bien")}</form></dialog>`,
   );
   d.querySelector("form").addEventListener("submit", (e) => {
     e.preventDefault();
@@ -668,7 +744,7 @@ function authDialog(mode = "register") {
     `<dialog class="auth-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader(mode === "register" ? "Bienvenue chez vous." : "Content de vous retrouver.", "Votre SCI, accessible avec le même compte sur vos appareils.", "lock")}<div class="auth-tabs"><button type="button" data-auth="register" class="${mode === "register" ? "active" : ""}">Créer mon espace</button><button type="button" data-auth="login" class="${mode === "login" ? "active" : ""}">Se connecter</button></div>${mode === "register" ? field("name", "Nom de votre SCI", "Ma SCI", "text", 'maxlength="100" required') : ""}${field("email", "Adresse e-mail", "", "email", 'autocomplete="email" required')}${field("password", "Mot de passe", "", "password", `minlength="12" maxlength="128" autocomplete="${mode === "register" ? "new-password" : "current-password"}" required`)}<p class="form-note">${mode === "register" ? "Choisissez au moins 12 caractères. Votre compte commence avec une SCI à l’IS, sans les exemples de la démonstration." : "Utilisez les identifiants de votre compte Cap SCI sur ce même serveur."}</p><p class="auth-error" role="alert"></p><button class="button primary auth-submit" type="submit">${icon("lock")}${mode === "register" ? "Créer mon compte" : "Se connecter"}</button></form></dialog>`,
   );
   d.querySelectorAll("[data-auth]").forEach((b) =>
-    b.addEventListener("click", () => authDialog(b.dataset.auth)),
+    b.addEventListener("click", () => { closeDialog(); authDialog(b.dataset.auth); }),
   );
   if (user && dirty) {
     d.querySelector('[data-auth="register"]').disabled = true;
@@ -801,7 +877,9 @@ document.addEventListener("click", async (e) => {
     navigate("exports");
     return;
   }
+  if (directoryUI.action(action, id)) return;
   if (financeUI.action(action, id)) return;
+  if (action === "duplicate-transaction") { transactionForm(undefined, id); return; }
   if (action === "add-transaction" || action === "edit-transaction")
     transactionForm(id);
   else if (action === "add-property" || action === "edit-property")
@@ -858,6 +936,7 @@ document.addEventListener("click", async (e) => {
   else if (action === "reset-filters") {
     query = "";
     category = "all";
+    documentFilter = "all";
     status = "all";
     propertyId = "all";
     pageNumber = 1;
@@ -960,6 +1039,7 @@ financeUI = createFinanceUI({
   },
   getUser: () => user,
   attachmentStatus,
+  createSupplier: callback => directoryUI.supplierForm(undefined, callback),
   persist,
   mountDialog,
   closeDialog,
@@ -983,6 +1063,15 @@ exportUI = createExportUI({
   download,
   toast,
 });
+const sharedDirectoryContext = {
+  getState: () => state, setState: next => { state = next; }, getUser: () => user,
+  persist, mountDialog, closeDialog, formHeader, formFooter, field, selectField, showErrors, options, allowMutation, toast, confirmDialog,
+  openEntityDocuments: (kind, id) => entityDocumentsUI.open(kind, id),
+  createRecurrenceForLease: id => financeUI.createFromLease(id),
+  editTransaction: id => transactionForm(id),
+};
+entityDocumentsUI = createEntityDocumentsUI(sharedDirectoryContext);
+directoryUI = createDirectoryUI(sharedDirectoryContext);
 app.innerHTML = '<div class="loading-state">Chargement de votre espace…</div>';
 try {
   acceptSession(await api("/session"));

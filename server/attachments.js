@@ -7,7 +7,7 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_ACCOUNT_BYTES = 50 * 1024 * 1024;
 const MAX_TRANSACTION_FILES = 20;
 
-function decodeName(header) {
+export function decodeName(header) {
   if (typeof header !== "string") return null;
   let name;
   try {
@@ -24,7 +24,7 @@ function decodeName(header) {
   return name;
 }
 
-function detectDocument(buffer) {
+export function detectDocument(buffer) {
   if (!Buffer.isBuffer(buffer)) return null;
   if (
     buffer.length >= 8 &&
@@ -55,13 +55,23 @@ function detectDocument(buffer) {
   return null;
 }
 
-function disposition(name) {
+export function disposition(name) {
   const fallback = name.replace(/[^\x20-\x7e]|["\\]/g, "_");
   const encoded = encodeURIComponent(name).replace(
     /[!'()*]/g,
     (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
   );
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
+
+/** Both operation and directory documents share the account storage limit. */
+export function accountDocumentBytes(db, userId) {
+  const operations = db.prepare("SELECT coalesce(sum(size_bytes),0) AS total FROM attachments WHERE user_id=?").get(userId).total;
+  const hasDirectoryDocuments = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='entity_documents'").get();
+  const directory = hasDirectoryDocuments
+    ? db.prepare("SELECT coalesce(sum(size_bytes),0) AS total FROM entity_documents WHERE user_id=?").get(userId).total
+    : 0;
+  return operations + directory;
 }
 
 /** Align names with the current operation label without modifying document bytes.
@@ -250,11 +260,7 @@ export function installAttachments(app, db, requireUser) {
         return res
           .status(409)
           .json({ error: "Cette opération contient déjà 20 justificatifs." });
-      const used = db
-        .prepare(
-          "SELECT coalesce(sum(size_bytes),0) AS total FROM attachments WHERE user_id=?",
-        )
-        .get(req.user.id).total;
+      const used = accountDocumentBytes(db, req.user.id);
       if (used + req.body.length > MAX_ACCOUNT_BYTES)
         return res.status(409).json({
           error: "L’espace de justificatifs de ce compte est limité à 50 Mo.",

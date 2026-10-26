@@ -285,3 +285,22 @@ test("le CSV seul utilise les compteurs authentifiés et laisse les justificatif
   })["operations.csv"];
   assert.match(overriding.split("\r\n").find((row) => row.startsWith('"t1";')), /;"2";"Non";"Bien\/Encaissements\/preuve.pdf";"Non"$/);
 });
+
+test("les références du répertoire complètent le tiers historique sans transformer une dispense de pièce en manque", () => {
+  const s = fixture();
+  s.properties[0].tenant = "Nouveau locataire du bien";
+  s.tenants = [{ id: "tenant-old", name: "Nom actuel de la fiche" }];
+  s.leases = [{ id: "lease-old", tenantId: "tenant-old", propertyId: "p1", startDate: "2025-01-01", endDate: "2025-12-31" }];
+  s.suppliers = [{ id: "supplier-1", name: "Assureur", legalName: "Assureur SA", siret: "12345678901234", reference: "CONTRAT-1" }];
+  Object.assign(s.transactions[0], { tenantId: "tenant-old", leaseId: "lease-old", documentNotRequired: true });
+  Object.assign(s.transactions[1], { supplierId: "supplier-1" });
+  const selection = exportSelection(s, { ...january, dateBasis: "period", startDate: "2025-12-01" });
+  const csv = accountantCSVs(s, selection, { leaseDocuments: [{ leaseId: "lease-old", path: "République T2/Encaissements/Bail.pdf" }] })["operations.csv"];
+  assert.ok(csv.includes('"ID fournisseur";"Fournisseur (fiche actuelle)"'));
+  assert.ok(csv.includes('"Assureur";"Assureur SA";"12345678901234"'));
+  assert.ok(csv.includes('"tenant-old";"lease-old";"2025-01-01";"2025-12-31";"République T2/Encaissements/Bail.pdf";"Non";"0";"Non"'));
+  assert.ok(!csv.includes("Nouveau locataire du bien"));
+  assert.ok(!csv.includes("Nom actuel de la fiche"));
+  assert.equal(normalizeExportOptions(s, january).includeLeaseDocuments, false);
+  assert.throws(() => normalizeExportOptions(s, { ...january, includeLeaseDocuments: "true" }), /options/);
+});

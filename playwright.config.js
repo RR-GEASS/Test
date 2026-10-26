@@ -27,6 +27,6 @@ export default defineConfig({
     command: "node scripts/dev.mjs --host 127.0.0.1 --port 5190 --strictPort",
     url: "http://127.0.0.1:5190",
     reuseExistingServer: !process.env.CI,
-    env: { SCI_API_PORT: "3012", SCI_DATA_DIR: ".artifacts/e2e-data" },
+    env: { SCI_E2E_TEST: "1", SCI_API_PORT: "3012", SCI_DATA_DIR: ".artifacts/e2e-data" },
   },
 });

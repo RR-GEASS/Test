@@ -37,6 +37,30 @@ Les montants de la fiche du bien servent de référence. Configurez ensuite une 
 
 ![Opérations périodiques avec données fictives](docs/periodicites.png)
 
+## Fournisseurs, locataires et locations
+
+**Fournisseurs** centralise nom court, raison sociale, coordonnées, SIRET, catégorie habituelle et référence client/contrat. Choisissez une fiche dans une opération ou une périodicité ; vous pouvez aussi créer un fournisseur pendant la saisie. La référence de chaque facture reste propre à l’opération. Désactiver une fiche conserve son historique et ses documents.
+
+**Locataires** conserve les coordonnées et documents personnels. **Locations** relie un locataire à un bien, avec dates d’entrée/sortie, loyer, provisions, dépôt prévu et jour d’échéance. Une location correspond à une occupation ; cette version accepte une seule location à la fois par bien. Pour un couple ou une colocation avec bail commun, renseignez les noms sur la même fiche. Créez une nouvelle location lors du changement d’occupant. Les noms historiques déjà saisis sur les biens ne deviennent pas automatiquement des fiches : créez-les et rattachez les opérations concernées explicitement.
+
+Depuis une location, **Préparer le loyer périodique** propose les données du bail. Les nouvelles échéances sont bornées par les dates d’occupation. Terminer une location conserve les opérations déjà créées : vérifiez les échéances en attente et ajustez manuellement le dernier loyer si un prorata est nécessaire. Le dépôt de garantie renseigné sur la location est un montant prévu ; son encaissement et sa restitution se saisissent comme opérations.
+
+Les fiches affichent les opérations rattachées par sélection explicite ; un même nom en texte libre ne crée pas de lien. Les changements de coordonnées ne réécrivent pas le nom du tiers conservé sur les anciennes opérations.
+
+Les documents sont accessibles depuis les fiches : contrats sur le fournisseur, documents personnels sur le locataire, baux/avenants/états des lieux/assurances sur la location. Le dépôt accepte plusieurs PDF, JPEG ou PNG à la fois et indique les fichiers refusés. Le quota de 50 Mo par compte couvre tous les documents et justificatifs. Dans l’export comptable, **Inclure les baux et avenants** est une option volontaire, limitée aux locations des opérations retenues ; les documents personnels restent exclus. Les nouvelles fiches et contrôles sont conservés dans le JSON, les fichiers restent dans la sauvegarde complète du serveur.
+
+## Gagner du temps chaque mois
+
+- Filtrez le pointage par bien, sens et reste à pointer ; changer un filtre remet la sélection de règlements à zéro.
+- Filtrez le journal par justificatif manquant, présent ou non nécessaire. Une lecture des documents indisponible ne doit pas être interprétée comme une absence de pièce.
+- Cochez **Justificatif non nécessaire** pour les mouvements pour lesquels vous n’attendez pas de document.
+- **Dupliquer** reprend les informations d’une opération avec une nouvelle date et sans règlement, référence de facture ou fichier. Vérifiez les montants et la location avant d’enregistrer.
+- Une opération semblable déclenche un avertissement de doublon ; un deuxième enregistrement permet de confirmer une répétition légitime.
+- Fermer un formulaire modifié demande de confirmer l’abandon. Les clics à côté ne ferment toujours pas les fenêtres.
+- L’export propose le mois et le trimestre précédents, conserve les préférences par compte sur ce navigateur et affiche les pièces/références à vérifier avant téléchargement.
+
+**Contrôle bancaire** permet de saisir le solde de fin de journée du relevé à une date, puis d’observer l’écart avec les mouvements réglés de l’application. Ce contrôle vise un seul compte bancaire suivi ; il ne se connecte pas à la banque. Les écarts sont recalculés lorsque les opérations sont corrigées. Un écart nul ne garantit pas l’absence de deux erreurs qui se compensent.
+
 ## Organiser les opérations régulières
 
 1. Donnez un **nom court unique** à chaque bien, par exemple « République T2 ». L’adresse reste dans la fiche. Les anciens noms sont conservés ; renommez les éventuels doublons avant de créer de nouvelles fiches.
@@ -55,7 +79,7 @@ Dans **Pointage mensuel → Ajuster le prêt**, reportez chaque mois les montant
 
 Les opérations et périodicités proposent aussi **Fournisseur / bénéficiaire / locataire**, **Référence de facture** et **Note pour le comptable**. Les informations d’une périodicité sont reprises sur ses nouvelles échéances ; vérifiez les références propres à chaque mois. Elles figurent dans les CSV. La ventilation du prêt y est indiquée comme **montants attendus pour l’échéance entière**, distincts des règlements réels, notamment en cas de paiement partiel.
 
-Les fenêtres restent ouvertes lorsqu’on clique à côté : utilisez **Fermer**, **Annuler**, la touche Échap ou le bouton d’enregistrement.
+Les fenêtres restent ouvertes lorsqu’on clique à côté. **Fermer**, **Annuler** et Échap demandent de confirmer l’abandon si la saisie a été modifiée.
 
 ![Pointage mensuel avec données fictives](docs/pointage.png)
 
@@ -125,7 +149,7 @@ SCI - Général/
   Décaissements/
 ```
 
-Les dossiers de justificatifs sont ajoutés lorsque « Inclure les justificatifs » est coché. Si cette option est décochée, le ZIP contient seulement les trois CSV.
+Les dossiers de justificatifs sont ajoutés lorsque « Inclure les justificatifs » est coché. Si cette option et « Inclure les baux et avenants » sont décochées, le ZIP contient seulement les trois CSV. Les baux et avenants demandés sont rangés directement dans le dossier Encaissements du bien, avec un nom qui indique leur nature et la location.
 
 Les CSV sont en UTF-8 avec séparateur point-virgule, lisibles dans Excel. Le total réglé historique d’une opération et son montant attendu ne sont pas des encaissements supplémentaires : les mouvements réels figurent dans `reglements.csv`, et les totaux de plage n’incluent que les paiements de la plage.
 

@@ -112,10 +112,38 @@ export function installExports(app, db, requireUser) {
             ...(data ? { data: Buffer.from(data) } : {}),
           };
         });
-        const csvs = accountantCSVs(state, selection, { documents, today });
+        const leaseDocuments = [];
+        if (selection.options.includeLeaseDocuments) {
+          const selectedLeaseIds = new Set(selection.transactions.map((t) => t.leaseId).filter(Boolean));
+          const leases = new Map((state.leases || []).filter((lease) => selectedLeaseIds.has(lease.id)).map((lease) => [lease.id, lease]));
+          const rows = db.prepare(
+            "SELECT id,entity_id,name,original_name,mime,size_bytes,created_at,document_type FROM entity_documents WHERE user_id=? AND kind='lease' AND document_type IN ('bail','avenant') ORDER BY created_at,id",
+          ).all(req.user.id);
+          for (const row of rows) {
+            const lease = leases.get(row.entity_id);
+            if (!lease) continue;
+            const folder = folders.get(lease.propertyId);
+            if (!folder) continue;
+            const directory = folder + "/Encaissements";
+            directories.add(folder + "/Encaissements/");
+            directories.add(folder + "/Décaissements/");
+            const label = documentBaseName(`${row.document_type === "bail" ? "Bail" : "Avenant"} · ${folder} · ${lease.startDate}`, Math.min(150, 190 - directory.length - 18));
+            let sequence = 1;
+            let name = documentFileName(label, row.original_name || row.name, sequence);
+            let path = directory + "/" + name;
+            while (usedPaths.has(pathKey(path))) {
+              name = documentFileName(label, row.original_name || row.name, ++sequence);
+              path = directory + "/" + name;
+            }
+            usedPaths.add(pathKey(path));
+            const stored = db.prepare("SELECT data FROM entity_documents WHERE id=? AND user_id=?").get(row.id, req.user.id);
+            if (stored?.data) leaseDocuments.push({ leaseId: lease.id, path, data: Buffer.from(stored.data) });
+          }
+        }
+        const csvs = accountantCSVs(state, selection, { documents, leaseDocuments, today });
         snapshot = {
           selection,
-          documents,
+          documents: [...documents, ...leaseDocuments],
           csvs,
           directories: [...directories],
         };

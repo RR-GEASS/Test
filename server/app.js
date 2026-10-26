@@ -20,6 +20,7 @@ import {
   synchronizeAttachmentNames,
 } from "./attachments.js";
 import { installExports } from "./exports.js";
+import { installEntityDocuments } from "./entity-documents.js";
 
 const derive = promisify(scrypt);
 const digest = (value) => createHash("sha256").update(value).digest("hex");
@@ -34,6 +35,7 @@ export function createApp({
   ),
   production = process.env.NODE_ENV === "production",
   trustProxy = process.env.SCI_TRUST_PROXY === "1",
+  authLimit = 30,
 } = {}) {
   if (dbPath !== ":memory:")
     mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
@@ -88,7 +90,7 @@ export function createApp({
   });
   const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: 30,
+    limit: production ? 30 : authLimit,
     standardHeaders: "draft-8",
     legacyHeaders: false,
     message: { error: "Trop de tentatives. Réessayez dans 15 minutes." },
@@ -172,6 +174,7 @@ export function createApp({
     res.json(payload(req.user)),
   );
   installAttachments(app, db, requireUser);
+  installEntityDocuments(app, db, requireUser);
   installExports(app, db, requireUser);
   app.post("/api/register", async (req, res, next) => {
     try {
@@ -289,6 +292,17 @@ export function createApp({
     }
     db.exec("BEGIN IMMEDIATE");
     try {
+      const current = db.prepare("SELECT state,revision FROM users WHERE id=?").get(req.user.id);
+      if (current?.revision === revision) {
+        const previousLeases = new Map((JSON.parse(current.state).leases || []).map(l => [l.id, l]));
+        if (state.leases.some(l => {
+          const previous = previousLeases.get(l.id);
+          return previous && (previous.tenantId !== l.tenantId || previous.propertyId !== l.propertyId);
+        })) {
+          db.exec("ROLLBACK");
+          return res.status(409).json({ error: "Une location enregistrée doit conserver son bien et son locataire. Créez une nouvelle location pour préserver les documents et l’historique.", code: "lease_identity_changed" });
+        }
+      }
       const result = db
         .prepare(
           "UPDATE users SET state=?,revision=revision+1 WHERE id=? AND revision=?",

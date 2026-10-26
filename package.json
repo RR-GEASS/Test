@@ -8,7 +8,7 @@
     "dev": "node scripts/dev.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test tests/model.test.js tests/server.test.js tests/attachments.test.js tests/document-names.test.js tests/accountant-export.test.js tests/exports.test.js",
+    "test": "node --test tests/*.test.js",
     "test:e2e": "playwright test",
     "start": "node server/index.js"
   },

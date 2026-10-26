@@ -787,3 +787,54 @@ test("la ventilation attendue d’un prêt partiellement réglé et ses renseign
     await h.close();
   }
 });
+
+test("les baux et avenants liés sont ajoutés uniquement sur demande, sans document personnel ni pièce d’une autre location", async () => {
+  const h = await harness();
+  try {
+    const owner = await account(h);
+    await populate(h, owner);
+    owner.state.tenants = [{ id: "tenant-1", name: "Camille Test", archived: false }];
+    owner.state.leases = [{ id: "lease-1", tenantId: "tenant-1", propertyId: "property-1", startDate: "2025-01-01", endDate: "2026-01-31", rentCents: 80000, chargesCents: 5000, depositCents: 80000, paymentDay: 5 }];
+    owner.state.leases.push({ ...owner.state.leases[0], id: "lease-2", startDate: "2026-02-01", endDate: "" });
+    owner.state.suppliers = [{ id: "supplier-1", name: "Assureur", legalName: "Assureur SA", siret: "12345678901234", archived: false }];
+    Object.assign(owner.state.transactions[0], { tenantId: "tenant-1", leaseId: "lease-1", documentNotRequired: true });
+    Object.assign(owner.state.transactions[1], { supplierId: "supplier-1" });
+    await save(h, owner);
+    const addDocument = async (kind, id, type, marker) => {
+      const bytes = Buffer.concat([PDF, Buffer.from(marker)]);
+      const response = await h.request(`/api/entities/${kind}/${id}/documents`, {
+        cookie: owner.cookie, body: bytes,
+        headers: { "X-File-Name": encodeURIComponent(`${marker}.pdf`), "X-Document-Type": type },
+      });
+      assert.equal(response.status, 201, JSON.stringify(response.data));
+      return bytes;
+    };
+    const bail = await addDocument("lease", "lease-1", "bail", "BAIL-SELECTED");
+    const avenant = await addDocument("lease", "lease-1", "avenant", "AVENANT-SELECTED");
+    await addDocument("lease", "lease-1", "etat_entree", "ETAT-EXCLUDED");
+    await addDocument("tenant", "tenant-1", "autre", "PERSONAL-EXCLUDED");
+    await addDocument("lease", "lease-2", "bail", "OTHER-LEASE-EXCLUDED");
+    let r = await h.request("/api/exports/accountant", { cookie: owner.cookie, body: { ...dates, operationIds: ["rent-1"] } });
+    assert.equal(r.status, 200);
+    assert.equal(documentEntries(zipFiles(r.bytes)).length, 0);
+    r = await h.request("/api/exports/accountant", { cookie: owner.cookie, body: { ...dates, operationIds: ["rent-1"], includeDocuments: false, includeLeaseDocuments: true } });
+    assert.equal(r.status, 200);
+    const files = zipFiles(r.bytes);
+    assertSimpleArchive(files);
+    const docs = documentEntries(files);
+    assert.equal(docs.length, 2);
+    assert.ok(docs.every(([path]) => path.startsWith("République T2/Encaissements/")));
+    assert.ok(docs.some(([,bytes]) => bytes.equals(bail)));
+    assert.ok(docs.some(([,bytes]) => bytes.equals(avenant)));
+    const rent = csvRows(files.get("operations.csv"))[0];
+    assert.equal(rent["ID locataire"], "tenant-1");
+    assert.equal(rent["ID location"], "lease-1");
+    assert.equal(rent["Locataire"], "Camille Test");
+    assert.equal(rent["Justificatif requis"], "Non");
+    assert.equal(rent["Justificatif manquant"], "Non");
+    for (const path of rent["Baux et avenants inclus"].split("\n")) assert.ok(files.has(path));
+    assert.equal(rent["Nombre de justificatifs enregistrés"], "0", "a lease document is not an operation receipt");
+  } finally {
+    await h.close();
+  }
+});

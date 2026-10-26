@@ -73,6 +73,9 @@ async function addOperation(
   await dialog
     .getByRole("button", { name: "Ajouter l’opération", exact: true })
     .click();
+  // These export fixtures can intentionally share a date and amount.
+  if (await dialog.getByRole("alert").filter({ hasText: "Une opération semblable existe déjà" }).isVisible())
+    await dialog.getByRole("button", { name: "Ajouter l’opération", exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await saved(page);
 }

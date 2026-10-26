@@ -380,3 +380,26 @@ test("une erreur de renommage ne valide pas partiellement la modification d’un
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+
+test("une location enregistrée ne peut pas être réattribuée par une écriture ou un import", async () => {
+  const h = await harness();
+  try {
+    const account = await register(h);
+    const { user, state } = account.data;
+    const cookie = account.cookie;
+    state.properties.push({id:"p1",name:"Bien",address:"",tenant:"",rentCents:0,chargesCents:0,archived:false});
+    state.tenants.push(...["t1","t2"].map(id => ({id,name:id,email:"",phone:"",address:"",notes:"",archived:false})));
+    state.leases.push({id:"l1",tenantId:"t1",propertyId:"p1",startDate:"2026-01-01",endDate:"",rentCents:50000,chargesCents:0,depositCents:50000,paymentDay:1,notes:""});
+    const saved = await h.request("/api/state",{cookie,method:"PUT",body:{state,revision:account.data.revision,accountId:user.id}});
+    assert.equal(saved.status,200);
+    const changed = structuredClone(saved.data.state);
+    changed.leases[0].tenantId = "t2";
+    const denied = await h.request("/api/state",{cookie,method:"PUT",body:{state:changed,revision:saved.data.revision,accountId:user.id}});
+    assert.equal(denied.status,409);
+    assert.equal(denied.data.code,"lease_identity_changed");
+    const current = await h.request("/api/session",{cookie});
+    assert.equal(current.data.state.leases[0].tenantId,"t1");
+    assert.equal(current.data.revision,saved.data.revision);
+  } finally { await h.close(); }
+});

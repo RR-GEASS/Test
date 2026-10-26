@@ -56,7 +56,7 @@ export function normalizeExportOptions(state, input = {}) {
       fail(`Le filtre « ${key} » contient une valeur inconnue.`);
     options[key] = [...new Set(values)];
   }
-  for (const key of ["includeDocuments", "includeFullPaymentHistory"]) {
+  for (const key of ["includeDocuments", "includeFullPaymentHistory", "includeLeaseDocuments"]) {
     if (input[key] !== undefined && typeof input[key] !== "boolean")
       fail("Les options de contenu de l’export sont invalides.");
     options[key] = input[key] ?? key === "includeDocuments";
@@ -171,12 +171,20 @@ const statusName = (today) => (t) =>
 export function accountantCSVs(
   state,
   selection,
-  { documents = [], attachmentCounts, today = parisToday() } = {},
+  { documents = [], leaseDocuments = [], attachmentCounts, today = parisToday() } = {},
 ) {
   const { transactions, payments } = selection;
   const status = statusName(today);
   const transactionsById = new Map(transactions.map((t) => [t.id, t]));
   const propertiesById = new Map(state.properties.map((p) => [p.id, p]));
+  const suppliersById = new Map((state.suppliers || []).map((s) => [s.id, s]));
+  const leasesById = new Map((state.leases || []).map((l) => [l.id, l]));
+  const tenantsById = new Map((state.tenants || []).map((t) => [t.id, t]));
+  const leasePaths = new Map();
+  for (const doc of leaseDocuments) {
+    if (!leasePaths.has(doc.leaseId)) leasePaths.set(doc.leaseId, []);
+    if (doc.path) leasePaths.get(doc.leaseId).push(doc.path);
+  }
   const rangedTotals = new Map();
   for (const p of payments) {
     if (p.inRange)
@@ -229,6 +237,20 @@ export function accountantCSVs(
       "Nombre de règlements historiques",
       "Encaissements dans la plage EUR",
       "Décaissements dans la plage EUR",
+      "ID fournisseur",
+      "Fournisseur (fiche actuelle)",
+      "Raison sociale fournisseur",
+      "SIRET fournisseur",
+      "Adresse fournisseur",
+      "E-mail fournisseur",
+      "Téléphone fournisseur",
+      "Référence client ou contrat fournisseur",
+      "ID locataire",
+      "ID location",
+      "Début de location",
+      "Fin de location",
+      "Baux et avenants inclus",
+      "Justificatif requis",
       "Nombre de justificatifs enregistrés",
       "Justificatif manquant",
       "Justificatifs inclus",
@@ -238,6 +260,8 @@ export function accountantCSVs(
   for (const t of transactions) {
     const p = propertiesById.get(t.propertyId);
     const ranged = rangedTotals.get(t.id) || 0;
+    const supplier = suppliersById.get(t.supplierId);
+    const lease = leasesById.get(t.leaseId);
     const files = documentsByTransaction.get(t.id) || [];
     // null means unavailable (demo); omitted means metadata supplied by the ZIP.
     const count = attachmentCounts === null
@@ -251,7 +275,7 @@ export function accountantCSVs(
       t.propertyId || "",
       p?.name || "SCI / Général",
       p?.address || "",
-      p?.tenant || "",
+      t.tenantId || ["rent", "recoverable"].includes(t.category) ? t.counterparty || "" : "",
       categoryFor(t.category)?.label || t.category,
       t.category,
       t.period || (t.dueDate || t.date).slice(0, 7),
@@ -274,8 +298,22 @@ export function accountantCSVs(
       getPayments(t).length,
       t.type === "income" ? moneyInput(ranged) : "",
       t.type === "expense" ? moneyInput(ranged) : "",
+      t.supplierId || "",
+      supplier?.name || "",
+      supplier?.legalName || "",
+      supplier?.siret || "",
+      supplier?.address || "",
+      supplier?.email || "",
+      supplier?.phone || "",
+      supplier?.reference || "",
+      t.tenantId || "",
+      t.leaseId || "",
+      lease?.startDate || "",
+      lease?.endDate || "",
+      (leasePaths.get(t.leaseId) || []).join("\n"),
+      t.documentNotRequired ? "Non" : "Oui",
       count ?? "",
-      count === null ? "" : count ? "Non" : "Oui",
+      t.documentNotRequired ? "Non" : count === null ? "" : count ? "Non" : "Oui",
       files.map((f) => f.path).join("\n"),
       t.normalizedLabel ? "Oui" : "Non",
     ]);
@@ -334,16 +372,20 @@ export function accountantCSVs(
     ],
   ];
   const propertyIds = new Set(transactions.map((t) => t.propertyId));
-  for (const p of state.properties.filter((p) => propertyIds.has(p.id)))
+  for (const p of state.properties.filter((p) => propertyIds.has(p.id))) {
+    const propertyLeases = (state.leases || []).filter(l => l.propertyId === p.id);
+    const activeLease = propertyLeases.find(l => l.startDate <= today && (!l.endDate || l.endDate >= today));
+    const currentTenant = propertyLeases.length ? tenantsById.get(activeLease?.tenantId)?.name || "" : p.tenant;
     properties.push([
       p.id,
       p.name,
       p.address,
-      p.tenant,
+      currentTenant,
       moneyInput(p.rentCents),
       moneyInput(p.chargesCents),
       p.archived ? "Oui" : "Non",
     ]);
+  }
   return {
     "operations.csv": makeAccountantCSV(operations),
     "reglements.csv": makeAccountantCSV(settlements),
