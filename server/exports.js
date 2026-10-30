@@ -2,11 +2,14 @@ import { ZipArchive } from "archiver";
 import { parseBackup, transactionLabel } from "../src/model.js";
 import {
   accountantCSVs,
+  accountantTables,
+  accountantWorkbookSheets,
   exportSelection,
   parisToday,
 } from "../src/accountant-export.js";
 import { synchronizeAttachmentNames } from "./attachments.js";
 import { documentBaseName, documentFileName } from "../src/document-names.js";
+import { createWorkbook } from "./workbook.js";
 
 const GENERAL_FOLDER = "SCI - Général";
 const pathKey = (value) => value.normalize("NFC").toLocaleLowerCase("fr");
@@ -34,7 +37,7 @@ function propertyFolders(state) {
 
 /** Export only the selected accounting tables and property/type document folders. */
 export function installExports(app, db, requireUser) {
-  app.post("/api/exports/accountant", requireUser, (req, res, next) => {
+  app.post("/api/exports/accountant", requireUser, async (req, res, next) => {
     let snapshot;
     try {
       db.exec("BEGIN IMMEDIATE");
@@ -140,11 +143,13 @@ export function installExports(app, db, requireUser) {
             if (stored?.data) leaseDocuments.push({ leaseId: lease.id, path, data: Buffer.from(stored.data) });
           }
         }
-        const csvs = accountantCSVs(state, selection, { documents, leaseDocuments, today });
+        const tables = accountantTables(state, selection, { documents, leaseDocuments, today });
+        const csvs = accountantCSVs(state, selection, { tables });
         snapshot = {
           selection,
           documents: [...documents, ...leaseDocuments],
           csvs,
+          tables,
           directories: [...directories],
         };
         db.exec("COMMIT");
@@ -159,6 +164,10 @@ export function installExports(app, db, requireUser) {
           error: error.message || "La sélection d’export est invalide.",
         });
     }
+    let workbook;
+    try { workbook = await createWorkbook(accountantWorkbookSheets(snapshot.tables)); }
+    catch (error) { return next(error); }
+    if (res.destroyed) return;
     const archive = new ZipArchive({ store: true });
     let failed = false;
     const abort = (error) => {
@@ -180,6 +189,7 @@ export function installExports(app, db, requireUser) {
       "Cache-Control": "no-store",
     });
     archive.pipe(res);
+    archive.append(workbook, { name: "cap-sci-comptable.xlsx" });
     for (const [name, text] of Object.entries(snapshot.csvs))
       archive.append(text, { name });
     for (const directory of snapshot.directories)

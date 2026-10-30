@@ -38,6 +38,8 @@ import {
 import { icon, esc } from "./ui.js";
 import { createHelpUI } from "./help-ui.js";
 import { createDocumentsGuideUI } from "./documents-guide-ui.js";
+import { createBankReconciliationUI } from "./bank-reconciliation-ui.js";
+import "./bank-reconciliation.css";
 import "./documents-guide.css";
 import { createAccountUI } from "./account-ui.js";
 import "./consolidation.css";
@@ -56,6 +58,7 @@ let directoryUI;
 let entityDocumentsUI;
 let helpUI;
 let documentsGuideUI;
+let bankReconciliationUI;
 let accountUI;
 let invitationToken = new URLSearchParams(location.search).get("invite") || "";
 let invitationPresented = false;
@@ -103,6 +106,7 @@ const navItems = [
   ["transactions", "receipt", "Opérations"],
   ["recurrences", "calendar", "Opérations périodiques"],
   ["pointing", "check", "Pointage mensuel"],
+  ["bank-reconciliation", "check", "Rapprochement bancaire"],
   ["arrears", "clock", "Loyers impayés"],
   ["forecast", "wallet", "Prévisionnel"],
   ["properties", "building", "Biens immobiliers"],
@@ -144,7 +148,7 @@ function houseArt(color = "#648bb0") {
 
 function navigationHTML() {
   const item = ([id, ico, label]) => `<button class="nav-item ${view===id?"active":""}" data-view="${id}" ${view===id?'aria-current="page"':""}>${icon(ico)}<span>${label}</span>${id==="properties"?`<span class="nav-count">${state.properties.filter(p=>!p.archived).length}</span>`:""}</button>`;
-  const main = ["dashboard","pointing","transactions","properties","exports"];
+  const main = ["dashboard","pointing","bank-reconciliation","transactions","properties","exports"];
   const groups = [["Dossiers",["tenants","leases","suppliers","recurrences"]],["Outils et réglages",["arrears","bank-checks","forecast","backups","access","history","storage","documents-guide"]]];
   return navItems.filter(n=>main.includes(n[0])).map(item).join("") + groups.map(([label, ids])=>`<details class="nav-group" ${ids.includes(view)?"open":""}><summary>${esc(label)}</summary>${navItems.filter(n=>ids.includes(n[0])).map(item).join("")}</details>`).join("");
 }
@@ -154,7 +158,7 @@ function startGuide() {
   return `<section class="panel start-guide"><h2>Préparer votre premier mois</h2><p>Pour les loyers, suivez ces étapes. Pour une dépense, créez le fournisseur puis saisissez l’opération.</p><div>${steps.map(([target,label,done],i)=>`<button type="button" class="button secondary" data-view="${target}">${done?"✓":i+1} · ${label}</button>`).join("")}</div><button class="text-link" data-action="help">Comprendre le parcours et les bonnes pratiques</button></section>`;
 }
 function shell() {
-  app.innerHTML = `<div class="app-layout"><div class="sidebar-overlay" data-action="close-sidebar"></div><aside class="sidebar" aria-label="Navigation principale"><a class="brand" href="/" aria-label="Cap SCI, accueil"><span class="brand-symbol">${icon("building")}</span><span>cap<small>SCI</small></span></a><button class="workspace-label" data-action="settings" aria-label="Paramètres de la SCI"><span class="workspace-avatar">${icon("building")}</span><span class="workspace-name">${esc(state.settings.name)}<small>${esc(fiscalLabel())}</small></span>${icon("down")}</button><div class="nav-section-label">VOTRE ESPACE</div><nav>${navigationHTML()}</nav><div class="sidebar-note"><span class="tiny-dot"></span>Suivi de trésorerie · ${esc(state.settings.taxRegime === "unknown" ? "régime à préciser" : state.settings.taxRegime)}</div><div class="sidebar-bottom"><div class="advisor-card">${icon("sparkle")}<strong>Les bons comptes,<br>l’esprit tranquille.</strong><p>Des opérations bien rangées pour travailler avec votre comptable.</p><button data-action="open-export">Dossier comptable ${icon("arrow")}</button></div><button class="theme-button" data-action="theme">${icon(theme === "dark" ? "sun" : "moon")} Mode ${theme === "dark" ? "clair" : "sombre"}</button><div class="account-footer">${icon(user ? "lock" : "circle")}<span>${user ? esc(user.email) : "Espace de démonstration"}</span>${user ? `<button class="icon-button" data-action="logout" aria-label="Se déconnecter">${icon("logout")}</button>` : ""}</div></div></aside><main class="main"><header class="topbar"><button class="mobile-menu icon-button" data-action="sidebar" aria-label="Ouvrir la navigation">${icon("menu")}</button><div class="breadcrumb">Mon patrimoine ${icon("chevron")}<span>${titleFor()}</span></div><div class="topbar-right"><button class="button secondary compact" data-action="help" aria-label="Aide de cette page">${icon("circle")}Aide</button><span class="sync-indicator ${dirty ? "warning" : ""}">${icon(user ? "lock" : "circle")}<span>${saving ? "Enregistrement…" : dirty ? "Non enregistré" : user ? "Enregistré en ligne" : "Mode démonstration"}</span></span><button class="profile-button" data-action="${user ? "settings" : "auth"}" aria-label="${user ? "Paramètres de la SCI" : "Créer mon compte"}">${user ? esc(state.settings.name.charAt(0).toUpperCase()) : icon("plus")}</button></div></header><div class="workspace-content"><div id="notice-area"></div><div class="page-heading"><div><div class="eyebrow">VOTRE PATRIMOINE, EN TOUTE CLARTÉ</div><h1>${titleFor()}<span>.</span></h1><p>${{ recurrences: "Loyers, emprunts, assurances : vos rendez-vous réguliers.", pointing: "Un relevé, quelques cases cochées, des comptes à jour.", arrears: "Retrouvez les loyers et provisions qui restent à recevoir.", forecast: "Anticipez les 12 prochains mois, sans confondre prévu et réglé.", dashboard: "Les bons chiffres pour garder une longueur d’avance.", transactions: "Chaque mouvement, à sa place. Rien de plus, rien de moins.", properties: "Vos adresses, vos locataires, votre patrimoine.", exports: "Un dossier précis, complet et facile à transmettre.", backups: "Vos données vous appartiennent. Gardez-en une copie.", suppliers: "Vos interlocuteurs, leurs coordonnées et leur historique.", tenants: "Les coordonnées et documents de vos locataires.", leases: "Chaque occupation, ses dates et son dossier.", "bank-checks": "Comparez votre suivi avec le solde du relevé bancaire.", access:"Un accès personnel pour chacun, une SCI partagée.", history:"Retrouvez les corrections et restaurations de votre espace.", storage:"Retrouvez vos fichiers et l’espace utilisé.", "documents-guide":"Les pièces à conserver et à transmettre pour chaque mouvement." }[view]}</p></div><button class="button primary" ${["access","history","storage","documents-guide"].includes(view)?"hidden":""} data-action="${({ properties: "add-property", recurrences: "add-recurrence", suppliers: "add-supplier", tenants: "add-tenant", leases: "add-lease", "bank-checks": "add-bank-check" })[view] || "add-transaction"}">${icon("plus")}${({ properties: "Ajouter un bien", recurrences: "Nouvelle périodicité", suppliers: "Ajouter un fournisseur", tenants: "Ajouter un locataire", leases: "Nouvelle location", "bank-checks": "Nouveau contrôle" })[view] || "Nouvelle opération"}</button></div><div id="page-content"></div><footer class="main-footer"><span>Cap SCI · Un patrimoine bien accompagné.</span><span>Suivi de trésorerie · ${esc(fiscalLabel())}</span></footer></div></main></div>`;
+  app.innerHTML = `<div class="app-layout"><div class="sidebar-overlay" data-action="close-sidebar"></div><aside class="sidebar" aria-label="Navigation principale"><a class="brand" href="/" aria-label="Cap SCI, accueil"><span class="brand-symbol">${icon("building")}</span><span>cap<small>SCI</small></span></a><button class="workspace-label" data-action="settings" aria-label="Paramètres de la SCI"><span class="workspace-avatar">${icon("building")}</span><span class="workspace-name">${esc(state.settings.name)}<small>${esc(fiscalLabel())}</small></span>${icon("down")}</button><div class="nav-section-label">VOTRE ESPACE</div><nav>${navigationHTML()}</nav><div class="sidebar-note"><span class="tiny-dot"></span>Suivi de trésorerie · ${esc(state.settings.taxRegime === "unknown" ? "régime à préciser" : state.settings.taxRegime)}</div><div class="sidebar-bottom"><div class="advisor-card">${icon("sparkle")}<strong>Les bons comptes,<br>l’esprit tranquille.</strong><p>Des opérations bien rangées pour travailler avec votre comptable.</p><button data-action="open-export">Dossier comptable ${icon("arrow")}</button></div><button class="theme-button" data-action="theme">${icon(theme === "dark" ? "sun" : "moon")} Mode ${theme === "dark" ? "clair" : "sombre"}</button><div class="account-footer">${icon(user ? "lock" : "circle")}<span>${user ? esc(user.email) : "Espace de démonstration"}</span>${user ? `<button class="icon-button" data-action="logout" aria-label="Se déconnecter">${icon("logout")}</button>` : ""}</div></div></aside><main class="main"><header class="topbar"><button class="mobile-menu icon-button" data-action="sidebar" aria-label="Ouvrir la navigation">${icon("menu")}</button><div class="breadcrumb">Mon patrimoine ${icon("chevron")}<span>${titleFor()}</span></div><div class="topbar-right"><button class="button secondary compact" data-action="help" aria-label="Aide de cette page">${icon("circle")}Aide</button><span class="sync-indicator ${dirty ? "warning" : ""}">${icon(user ? "lock" : "circle")}<span>${saving ? "Enregistrement…" : dirty ? "Non enregistré" : user ? "Enregistré en ligne" : "Mode démonstration"}</span></span><button class="profile-button" data-action="${user ? "settings" : "auth"}" aria-label="${user ? "Paramètres de la SCI" : "Créer mon compte"}">${user ? esc(state.settings.name.charAt(0).toUpperCase()) : icon("plus")}</button></div></header><div class="workspace-content"><div id="notice-area"></div><div class="page-heading"><div><div class="eyebrow">VOTRE PATRIMOINE, EN TOUTE CLARTÉ</div><h1>${titleFor()}<span>.</span></h1><p>${{ recurrences: "Loyers, emprunts, assurances : vos rendez-vous réguliers.", pointing: "Un relevé, quelques cases cochées, des comptes à jour.", arrears: "Retrouvez les loyers et provisions qui restent à recevoir.", forecast: "Anticipez les 12 prochains mois, sans confondre prévu et réglé.", dashboard: "Les bons chiffres pour garder une longueur d’avance.", transactions: "Chaque mouvement, à sa place. Rien de plus, rien de moins.", properties: "Vos adresses, vos locataires, votre patrimoine.", exports: "Un dossier précis, complet et facile à transmettre.", backups: "Vos données vous appartiennent. Gardez-en une copie.", suppliers: "Vos interlocuteurs, leurs coordonnées et leur historique.", tenants: "Les coordonnées et documents de vos locataires.", leases: "Chaque occupation, ses dates et son dossier.", "bank-checks": "Comparez votre suivi avec le solde du relevé bancaire.", access:"Un accès personnel pour chacun, une SCI partagée.", history:"Retrouvez les corrections et restaurations de votre espace.", storage:"Retrouvez vos fichiers et l’espace utilisé.", "documents-guide":"Les pièces à conserver et à transmettre pour chaque mouvement.", "bank-reconciliation":"Reliez les mouvements du compte aux règlements saisis, puis validez." }[view]}</p></div><button class="button primary" ${["access","history","storage","documents-guide"].includes(view)?"hidden":""} data-action="${({ "bank-reconciliation": "bank-import", properties: "add-property", recurrences: "add-recurrence", suppliers: "add-supplier", tenants: "add-tenant", leases: "add-lease", "bank-checks": "add-bank-check" })[view] || "add-transaction"}">${icon("plus")}${({ "bank-reconciliation": "Importer un CSV bancaire", properties: "Ajouter un bien", recurrences: "Nouvelle périodicité", suppliers: "Ajouter un fournisseur", tenants: "Ajouter un locataire", leases: "Nouvelle location", "bank-checks": "Nouveau contrôle" })[view] || "Nouvelle opération"}</button></div><div id="page-content"></div><footer class="main-footer"><span>Cap SCI · Un patrimoine bien accompagné.</span><span>Suivi de trésorerie · ${esc(fiscalLabel())}</span></footer></div></main></div>`;
   renderNotices();
   renderPage();
 }
@@ -186,6 +190,7 @@ function renderPage() {
   if (view === "backups") renderBackups(content);
   if (view === "exports") exportUI.render(content);
   if (view === "documents-guide") documentsGuideUI.render(content);
+  if (view === "bank-reconciliation") bankReconciliationUI.render(content);
   financeUI.render(view, content);
   directoryUI.render(view, content);
   accountUI.render(view, content);
@@ -1119,6 +1124,7 @@ document.addEventListener("click", async (e) => {
     return;
   }
   if (action==="help") {helpUI.open(view);return;}
+  if (bankReconciliationUI.action(action,id)) return;
   if (accountUI.action(action,id)) return;
   if (directoryUI.action(action, id)) return;
   if (financeUI.action(action, id)) return;
@@ -1331,6 +1337,7 @@ directoryUI = createDirectoryUI(sharedDirectoryContext);
 helpUI = createHelpUI(sharedDirectoryContext);
 documentsGuideUI = createDocumentsGuideUI({ navigate });
 accountUI = createAccountUI(sharedDirectoryContext);
+bankReconciliationUI = createBankReconciliationUI(sharedDirectoryContext);
 app.innerHTML = '<div class="loading-state">Chargement de votre espace…</div>';
 try {
   acceptSession(await api("/session"));

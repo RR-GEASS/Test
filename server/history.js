@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { parseBackup, generateRecurringTransactions, monthEnd } from "../src/model.js";
+import { parseBackup, generateRecurringTransactions, getPayments, monthEnd } from "../src/model.js";
 import { synchronizeAttachmentNames } from "./attachments.js";
 
 const collections = {
   properties: "bien", suppliers: "fournisseur", tenants: "locataire",
   leases: "location", transactions: "opération", recurrences: "périodicité",
-  bankChecks: "contrôle bancaire",
+  bankChecks: "contrôle bancaire", bankImports: "import bancaire",
+  bankLines: "ligne bancaire", bankMatches: "rapprochement bancaire",
 };
 const actionNames = { create: "Création", update: "Modification", delete: "Suppression", cancel: "Annulation", payment: "Règlements modifiés" };
 const hasPayments = (operation) => Array.isArray(operation.payments)
@@ -17,6 +18,7 @@ const parisToday = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Pa
 /** Economic corrections to settled operations must remain traceable. */
 export function validateProtectedChanges(before, after) {
   const next = new Map((after.transactions || []).map((operation) => [operation.id, operation]));
+  validateBankProtectedChanges(before, after, next);
   for (const previous of before.transactions || []) {
     const current = next.get(previous.id);
     if (!current) {
@@ -39,6 +41,45 @@ export function validateProtectedChanges(before, after) {
         throw new Error("Indiquez le motif de l’annulation.");
       if (!isDeepStrictEqual(previous.payments, current.payments))
         throw new Error("L’annulation doit conserver les règlements d’origine dans l’historique.");
+    }
+  }
+}
+
+function validateBankProtectedChanges(before, after, nextTransactions) {
+  const previousMatches = before.bankMatches || [];
+  const nextMatches = new Map((after.bankMatches || []).map(match => [match.id, match]));
+  const nextMatchByLine = new Map((after.bankMatches || []).map(match => [match.bankLineId, match]));
+  const matchedLineIds = new Set(previousMatches.map(match => match.bankLineId));
+  const matchedImportIds = new Set((before.bankLines || []).filter(line => matchedLineIds.has(line.id)).map(line => line.importId));
+  const nextLines = new Map((after.bankLines || []).map(line => [line.id, line]));
+  const nextImports = new Map((after.bankImports || []).map(batch => [batch.id, batch]));
+  const previousTransactions = new Map((before.transactions || []).map(operation => [operation.id, operation]));
+  for (const batch of before.bankImports || []) {
+    const current = nextImports.get(batch.id);
+    if (current && (current.name !== batch.name || current.importedAt !== batch.importedAt))
+      throw new Error("Les informations d’un import bancaire doivent rester conservées. Supprimez l’import non rapproché puis importez le bon fichier.");
+    if (!current && matchedImportIds.has(batch.id))
+      throw new Error("Défaites et enregistrez les rapprochements avant de supprimer cet import bancaire.");
+  }
+  const sourceFields = ["importId", "date", "valueDate", "label", "amountCents", "reference", "sourceLineNumber"];
+  for (const previous of before.bankLines || []) {
+    const current = nextLines.get(previous.id);
+    if (current && sourceFields.some(field => (current[field] ?? "") !== (previous[field] ?? "")))
+      throw new Error("Une ligne bancaire importée ne peut pas être modifiée. Supprimez l’import non rapproché puis importez le bon fichier.");
+    if (!current && matchedLineIds.has(previous.id))
+      throw new Error("Défaites et enregistrez le rapprochement avant de supprimer cette ligne bancaire.");
+  }
+  for (const match of previousMatches) {
+    const current = nextMatches.get(match.id);
+    if ((current && !isDeepStrictEqual(current, match)) || (!current && nextMatchByLine.has(match.bankLineId)))
+      throw new Error("Un rapprochement validé doit rester conservé. Défaites-le et enregistrez avant d’en valider un autre.");
+    for (const allocation of match.allocations || []) {
+      const previous = previousTransactions.get(allocation.transactionId);
+      const currentOperation = nextTransactions.get(allocation.transactionId);
+      const previousPayment = previous && getPayments(previous).find(payment => payment.id === allocation.paymentId);
+      const currentPayment = currentOperation && getPayments(currentOperation).find(payment => payment.id === allocation.paymentId);
+      if (!currentOperation || currentOperation.cancelledAt || !isDeepStrictEqual(previousPayment, currentPayment))
+        throw new Error("Ce règlement est rapproché d’une ligne bancaire. Défaites et enregistrez son rapprochement avant de modifier, retirer ou annuler le règlement.");
     }
   }
 }
@@ -94,6 +135,7 @@ export function recordStateChanges(db, { ownerId, actorId, actorEmail, before, a
   }
   if (!isDeepStrictEqual(before.settings, after.settings))
     add("update", "settings", ownerId, "Modification des paramètres de la SCI", before.settings, after.settings);
+  const bankLines = new Map([...(before.bankLines || []), ...(after.bankLines || [])].map(line => [line.id, line]));
   for (const [key, label] of Object.entries(collections)) {
     const original = new Map((before[key] || []).map((row) => [row.id, row]));
     const current = new Map((after[key] || []).map((row) => [row.id, row]));
@@ -105,7 +147,9 @@ export function recordStateChanges(db, { ownerId, actorId, actorEmail, before, a
         if (!left.cancelledAt && right.cancelledAt) change = "cancel";
         else if (!isDeepStrictEqual(left.payments, right.payments)) change = "payment";
       }
-      const display = right?.label || left?.label || right?.name || left?.name || id;
+      const lineId = right?.bankLineId || left?.bankLineId;
+      const bankLine = lineId && bankLines.get(lineId);
+      const display = right?.label || left?.label || right?.name || left?.name || (bankLine ? `${bankLine.date} · ${bankLine.label}` : id);
       add(change, key, id, `${actionNames[change]} ${label} : ${display}`, left, right);
     }
   }

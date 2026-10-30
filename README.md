@@ -8,13 +8,14 @@ Un site en français pour suivre les biens, les loyers et la trésorerie d’une
 
 ## Le parcours conseillé
 
-Le menu principal rassemble **Vue d’ensemble, Pointage mensuel, Opérations, Biens immobiliers et Export comptable**. Les fiches et périodicités sont regroupées dans **Dossiers** ; les accès, sauvegardes, historique, documents et contrôles sont dans **Outils et réglages**. Le bouton **Aide** propose des étapes et bonnes pratiques adaptées à la page ; une aide est aussi accessible dans les formulaires, sans abandonner la saisie.
+Le menu principal rassemble **Vue d’ensemble, Pointage mensuel, Rapprochement bancaire, Opérations, Biens immobiliers et Export comptable**. Les fiches et périodicités sont regroupées dans **Dossiers** ; les accès, sauvegardes, historique, documents et contrôles sont dans **Outils et réglages**. Le bouton **Aide** propose des étapes et bonnes pratiques adaptées à la page ; une aide est aussi accessible dans les formulaires, sans abandonner la saisie.
 
 1. Réglez le nom de la SCI, la date et le montant du solde bancaire initial dans les paramètres.
 2. Pour les loyers, créez le bien, le locataire, puis la location et joignez le bail.
 3. Depuis la location, préparez le loyer périodique. Si une périodicité existe déjà, elle est ouverte plutôt que doublée.
 4. Pointez uniquement les mouvements réellement constatés sur le relevé, avec leur date réelle et leurs justificatifs.
-5. Comparez le solde bancaire en fin de pointage, puis préparez le dossier à transmettre au comptable.
+5. Importez les mouvements bancaires en CSV, vérifiez les correspondances proposées et validez les rapprochements.
+6. Comparez le solde bancaire en fin de pointage, puis préparez le dossier à transmettre au comptable.
 
 ### Changer un loyer et corriger une erreur
 
@@ -33,6 +34,18 @@ Deux accès maximum sont prévus. Le propriétaire peut retirer le deuxième acc
 ### Préparer l’année du comptable
 
 Dans l’export, **Dossier annuel comptable** retient les opérations dont l’échéance ou la période concerne l’année, ainsi que les règlements de l’année. Cela inclut les factures non réglées et les règlements de dettes antérieures. Les annulations restent exclues par défaut. Vérifiez la sélection et les pièces avec le comptable : il s’agit d’un dossier de préparation, pas d’un FEC ou d’une déclaration fiscale.
+
+### Importer et rapprocher les mouvements bancaires
+
+Dans **Rapprochement bancaire**, importez le CSV des opérations du compte de la SCI. Le lecteur reconnaît des colonnes françaises courantes, sans imposer un modèle Caisse d’Épargne unique : vérifiez l’aperçu et ajustez les colonnes au fichier effectivement téléchargé. Les formats PDF, OFX et Excel ne sont pas lus par cet import. Il accepte un montant signé ou deux colonnes débit/crédit ; les dates et montants invalides bloquent l’import. Les fichiers UTF-8 et Windows-1252 sont pris en charge, ainsi que les séparateurs point-virgule, virgule et tabulation.
+
+L’import **ne crée pas d’opération et ne modifie pas la trésorerie**. Saisissez ou pointez d’abord les règlements, puis rapprochez chaque mouvement bancaire. Les suggestions utilisent le sens, le montant disponible et une date à sept jours maximum ; aucune n’est cochée ou validée automatiquement. Un virement peut couvrir plusieurs règlements et un règlement peut être réparti sur plusieurs virements, en conservant les totaux exacts en centimes. Les mouvements sans contrepartie restent visibles.
+
+Les réimportations écartent les occurrences semblables déjà présentes, tout en conservant plusieurs mouvements identiques dans un même fichier. L’aperçu indique les doublons probables : forcez leur ajout seulement après vérification. Un mauvais choix de colonnes se corrige en supprimant l’import non rapproché puis en le refaisant. Les sources importées et les liens validés sont protégés ; défaites et enregistrez d’abord un rapprochement avant de corriger son règlement. L’historique conserve ces changements.
+
+Cet espace suit **un seul compte bancaire**. Les lignes normalisées, leur fichier et leur numéro de ligne sont conservés dans la base et les sauvegardes JSON. Le fichier CSV brut et les relevés PDF de la banque ne sont pas joints automatiquement : conservez les relevés officiels pour le comptable.
+
+Le dossier comptable contient un classeur **cap-sci-comptable.xlsx**, avec les opérations, règlements, biens et le rapprochement bancaire, ainsi que les CSV. L’option de rapprochement retient les lignes bancaires selon leur date dans la plage choisie. Les lignes non attribuées restent signalées ; les allocations exclues par les filtres sont identifiées. Les montants bancaires ne sont comptés qu’une fois même si une ligne règle plusieurs opérations.
 
 ### Sauvegardes et documents
 

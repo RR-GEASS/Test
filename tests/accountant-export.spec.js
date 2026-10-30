@@ -198,6 +198,7 @@ function assertSimplePackage(entries) {
   ).toBe(false);
   expect(names.filter((name) => !name.includes("/")).sort()).toEqual([
     "biens.csv",
+    "cap-sci-comptable.xlsx",
     "operations.csv",
     "reglements.csv",
   ]);

@@ -6,6 +6,9 @@ import {
   normalizeExportOptions,
   accountantCSVs,
   annualAccountantOptions,
+  accountantTables,
+  accountantWorkbookSheets,
+  bankReconciliationTable,
 } from "../src/accountant-export.js";
 function fixture() {
   const s = createEmptyState();
@@ -113,6 +116,118 @@ test("sélection des dates réelles inclusive et paiements traversant deux exerc
   );
   assert.equal(result.summary.periodIncomeCents, 52500);
   assert.equal(result.summary.periodExpenseCents, 0);
+});
+
+function bankFixture() {
+  const s = fixture();
+  s.bankImports = [{ id: "import-jan", name: "caisse-epargne-janvier.csv", importedAt: "2026-02-01T10:00:00.000Z" }];
+  s.bankLines = [
+    { id: "bank-group", importId: "import-jan", date: "2026-01-16", valueDate: "2026-01-17", label: "VIREMENT GROUPÉ", amountCents: 52500, reference: "BANK-001", sourceLineNumber: 2 },
+    { id: "bank-fee", importId: "import-jan", date: "2026-01-20", valueDate: "", label: "PRÉLÈVEMENT À IDENTIFIER", amountCents: -4200, reference: "BANK-002", sourceLineNumber: 3 },
+    { id: "bank-unknown", importId: "import-jan", date: "2026-01-30", valueDate: "", label: "VIREMENT SANS AFFECTATION", amountCents: 5000, reference: "", sourceLineNumber: 4 },
+    { id: "bank-feb", importId: "import-jan", date: "2026-02-01", valueDate: "", label: "HORS DATES BANCAIRES", amountCents: 9999, reference: "", sourceLineNumber: 5 },
+  ];
+  s.bankMatches = [{ id: "match-group", bankLineId: "bank-group", validatedAt: "2026-02-01T10:30:00.000Z", allocations: [
+    { transactionId: "t1", paymentId: "r2", amountCents: 42500 },
+    { transactionId: "t3", paymentId: "r3", amountCents: 10000 },
+  ] }];
+  return s;
+}
+const tableObjects = rows => rows.slice(1).map(row => Object.fromEntries(rows[0].map((header, index) => [header, row[index]])));
+
+test("les lignes bancaires et leurs allocations sont exportées sans doubler les flux", () => {
+  const s = bankFixture();
+  const selected = exportSelection(s, january);
+  const tables = accountantTables(s, selected);
+  const bank = tableObjects(tables.bank);
+  assert.equal(bank.length, 4);
+  assert.equal(bank.filter(row => row["ID ligne bancaire"] === "bank-group").length, 2);
+  assert.equal(bank.filter(row => row["Crédit bancaire EUR"] === "525,00").length, 1);
+  assert.equal(bank.filter(row => row["Montant bancaire affecté à la sélection EUR"] === "525,00").length, 1);
+  assert.equal(bank.reduce((sum, row) => sum + Number((row["Montant rapproché EUR"] || "0").replace(",", ".")), 0), 525);
+  assert.ok(bank.some(row => row["Statut du rapprochement"] === "À rapprocher — Non attribué" && row["ID opération"] === ""));
+  assert.equal(bank.some(row => row["Libellé bancaire"] === "HORS DATES BANCAIRES"), false);
+  const settlements = tableObjects(tables.settlements);
+  assert.equal(settlements.length, 2);
+  assert.equal(settlements.find(row => row["ID règlement"] === "r2")["IDs des lignes bancaires"], "bank-group");
+  assert.equal(settlements.find(row => row["ID règlement"] === "r2")["Montant réglé EUR"], "425,00");
+  assert.equal(settlements.find(row => row["ID règlement"] === "r2")["Statut du rapprochement bancaire"], "Rapproché");
+  const summary = bankReconciliationTable(s, selected).summary;
+  assert.deepEqual(summary, { lineCount: 3, matchedLineCount: 1, unmatchedLineCount: 2, partialSelectionLineCount: 0,
+    periodIncomeCents: 57500, periodExpenseCents: 4200, outsideSelectionCents: 0 });
+  assert.ok(accountantCSVs(s, selected)["rapprochement-bancaire.csv"].includes("caisse-epargne-janvier.csv"));
+});
+
+test("les filtres cachent les associations exclues mais gardent les lignes bancaires non attribuées explicites", () => {
+  const s = bankFixture();
+  const selected = exportSelection(s, { ...january, propertyIds: ["p1"] });
+  const exported = bankReconciliationTable(s, selected);
+  const rows = tableObjects(exported.rows);
+  const grouped = rows.filter(row => row["ID ligne bancaire"] === "bank-group");
+  assert.equal(grouped.length, 1);
+  assert.equal(grouped[0]["ID opération"], "t1");
+  assert.equal(grouped[0]["Montant bancaire hors sélection EUR"], "100,00");
+  assert.equal(grouped[0]["Montant rapproché EUR"], "425,00");
+  assert.equal(rows.some(row => row["ID opération"] === "t3"), false);
+  assert.equal(rows.filter(row => row["Nom court du bien"] === "Non attribué").length, 2);
+  assert.equal(exported.summary.partialSelectionLineCount, 1);
+  const expenses = bankReconciliationTable(s, exportSelection(s, { ...january, types: ["expense"] }));
+  assert.equal(expenses.summary.lineCount, 1);
+  assert.equal(tableObjects(expenses.rows)[0]["ID ligne bancaire"], "bank-fee");
+});
+
+test("les références bancaires hors dates restent identifiées sur le règlement sans le compter deux fois", () => {
+  const s = bankFixture();
+  s.bankLines.find(line => line.id === "bank-group").amountCents = 50000;
+  s.bankMatches[0].allocations[0].amountCents = 40000;
+  s.bankLines.find(line => line.id === "bank-feb").amountCents = 2500;
+  s.bankMatches.push({ id: "match-feb", bankLineId: "bank-feb", validatedAt: "2026-02-02T10:30:00.000Z",
+    allocations: [{ transactionId: "t1", paymentId: "r2", amountCents: 2500 }] });
+  const selection = exportSelection(s, january);
+  const tables = accountantTables(s, selection);
+  const payment = tableObjects(tables.settlements).find(row => row["ID règlement"] === "r2");
+  assert.equal(payment["Montant réglé EUR"], "425,00");
+  assert.equal(payment["Montant rapproché EUR"], "425,00");
+  assert.equal(payment["IDs des lignes bancaires"], "bank-group\nbank-feb");
+  assert.equal(payment["Lignes bancaires hors plage"], "bank-feb");
+  assert.equal(tables.settlements.length, 3);
+  assert.equal(tableObjects(tables.bank).some(row => row["ID ligne bancaire"] === "bank-feb"), false);
+});
+
+test("la date bancaire sélectionne un rapprochement même si son règlement est hors plage", () => {
+  const s = bankFixture();
+  s.transactions = [{ ...s.transactions[0], payments: [s.transactions[0].payments[0]] }];
+  s.bankLines = [{ ...s.bankLines[0], amountCents: 42500 }];
+  s.bankMatches[0].allocations = [{ transactionId: "t1", paymentId: "r1", amountCents: 42500 }];
+  const selected = exportSelection(s, january);
+  assert.equal(selected.transactions.length, 0);
+  const rows = tableObjects(bankReconciliationTable(s, selected).rows);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]["Date réelle du règlement"], "2025-12-15");
+  assert.equal(rows[0]["Règlement dans la plage de dates"], "Non — hors plage");
+  assert.equal(rows[0]["Opération dans la sélection datée"], "Non — hors sélection datée");
+  assert.equal(bankReconciliationTable(s, exportSelection(s, { ...january, operationIds: [] })).summary.lineCount, 0);
+});
+
+test("l’option bancaire exclut ses données et le classeur fournit de vrais montants numériques", () => {
+  const s = bankFixture();
+  s.bankLines[0].label = "001,00";
+  s.bankLines[0].reference = "0001,00";
+  const selected = exportSelection(s, january);
+  const tables = accountantTables(s, selected);
+  const sheets = accountantWorkbookSheets(tables);
+  assert.deepEqual(sheets.map(sheet => sheet.name), ["Opérations", "Règlements", "Rapprochement bancaire", "Biens"]);
+  const bankSheet = sheets[2];
+  assert.equal(bankSheet.rows[1][bankSheet.rows[0].indexOf("Crédit bancaire EUR")], 525);
+  assert.equal(bankSheet.rows[1][bankSheet.rows[0].indexOf("Libellé bancaire")], "001,00");
+  assert.equal(bankSheet.rows[1][bankSheet.rows[0].indexOf("Référence bancaire")], "0001,00");
+  const excluded = exportSelection(s, { ...january, includeBankReconciliation: false });
+  const csvs = accountantCSVs(s, excluded);
+  assert.equal("rapprochement-bancaire.csv" in csvs, false);
+  assert.equal(bankReconciliationTable(s, excluded).rows.length, 1);
+  assert.equal(csvs["reglements.csv"].includes("0001,00"), false);
+  assert.equal(csvs["reglements.csv"].includes("Non inclus"), true);
+  assert.throws(() => normalizeExportOptions(s, { ...january, includeBankReconciliation: "true" }), /options/);
 });
 test("l’historique supplémentaire est repéré et ne gonfle pas les totaux de la plage", () => {
   const result = exportSelection(fixture(), {

@@ -1,3 +1,5 @@
+import { assertNoBankMatch, validateBankState } from "./bank-reconciliation.js";
+
 export const VERSION = 1;
 export const STORAGE_KEY = "atelier.sci.v1";
 export const CATEGORIES = [
@@ -105,6 +107,9 @@ export function createEmptyState(taxRegime = "IS") {
     tenants: [],
     leases: [],
     bankChecks: [],
+    bankImports: [],
+    bankLines: [],
+    bankMatches: [],
   };
 }
 export function createDemoState() {
@@ -423,6 +428,7 @@ export function cancelTransaction(state, id, reason, date = todayISO()) {
   if (!t || t.cancelledAt) throw new Error("Cette opération est absente ou déjà annulée.");
   if (!validDate(date) || !clean(reason) || clean(reason).length > 1000)
     throw new Error("Indiquez un motif d’annulation de 1 à 1 000 caractères et une date valide.");
+  assertNoBankMatch(state, { transactionId: id });
   t.cancelledAt = date;
   t.cancellationReason = clean(reason);
   return t;
@@ -930,6 +936,7 @@ export function parseBackup(raw) {
       if (occurrences.has(key)) fail("Une échéance périodique est dupliquée.");
       occurrences.add(key);
     }
+  Object.assign(state, validateBankState(data, state));
   return state;
 }
 function csvCell(value) {

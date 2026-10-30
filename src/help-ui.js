@@ -65,12 +65,19 @@ const pages = {
     tips: ["Les montants déjà réglés ne sont pas réécrits lors d’un changement de loyer.", "Le dépôt de garantie indiqué au bail est un montant prévu : saisissez aussi son encaissement et sa restitution.", "Les premiers et derniers loyers peuvent nécessiter un prorata à vérifier manuellement."],
     links: [["recurrences", "Voir les périodicités"], ["pointing", "Pointer les loyers"]],
   },
+  "bank-reconciliation": {
+    title: "Relier le relevé bancaire aux règlements",
+    intro: "Les règlements décrivent les paiements saisis. Le rapprochement conserve leur lien avec les mouvements importés du compte bancaire.",
+    steps: ["Téléchargez les opérations du compte de la SCI au format CSV depuis votre banque, puis importez le fichier.", "Vérifiez l’aperçu et les colonnes : date d’opération, libellé, montant signé ou débit et crédit. Corrigez leur choix si nécessaire avant de confirmer.", "Pour chaque mouvement, consultez les propositions de même montant et de même sens, avec une date proche. Sélectionnez vous-même le bon règlement.", "Si un virement couvre plusieurs règlements, répartissez son montant. Si un règlement correspond à plusieurs virements, rapprochez chaque partie.", "Validez lorsque le total correspond exactement. Les lignes sans contrepartie restent à traiter dans les opérations ou le pointage."],
+    tips: ["Importer un CSV ne crée aucune opération, ne pointe aucun règlement et ne change pas la trésorerie.", "Une suggestion n’est jamais validée automatiquement. Deux règlements de même montant demandent une vérification du tiers et du libellé bancaire.", "Les doublons probables sont écartés à la réimportation. Vérifiez l’aperçu avant de forcer l’ajout de mouvements semblables.", "Défaites un rapprochement et enregistrez ce retrait avant de corriger ou d’annuler son règlement. Supprimez un import non rapproché pour corriger un mauvais choix de colonnes.", "Un seul compte bancaire est suivi dans cet espace. Conservez aussi les relevés PDF de la banque pour votre comptable : l’import conserve les lignes et le nom du CSV, sans remplacer le relevé officiel."],
+    links: [["pointing", "Saisir ou pointer les règlements"], ["exports", "Préparer le dossier rapproché"], ["bank-checks", "Comparer les soldes"]],
+  },
   "bank-checks": {
     title: "Comparer le solde bancaire",
     intro: "Ce contrôle compare le solde de fin de journée du relevé à celui calculé avec vos mouvements réglés.",
     steps: ["Choisissez une date de relevé et recopiez son solde exact.", "Si l’écart n’est pas nul, cherchez les mouvements oubliés, en double, mal datés ou saisis pour un mauvais montant.", "Corrigez les opérations concernées, puis vérifiez à nouveau le contrôle."],
     tips: ["Ce contrôle convient à un seul compte bancaire suivi dans l’application.", "Un écart nul ne prouve pas que chaque mouvement est correct : deux erreurs peuvent se compenser.", "Le contrôle se recalcule après correction ; il ne verrouille pas une période."],
-    links: [["pointing", "Retour au pointage"], ["transactions", "Vérifier les opérations"]],
+    links: [["bank-reconciliation", "Relier les lignes du relevé"], ["pointing", "Retour au pointage"], ["transactions", "Vérifier les opérations"]],
   },
   forecast: {
     title: "Lire le prévisionnel",

@@ -250,7 +250,7 @@ function zipFiles(bytes) {
   return files;
 }
 
-const csvNames = ["operations.csv", "reglements.csv", "biens.csv"];
+const csvNames = ["operations.csv", "reglements.csv", "biens.csv", "cap-sci-comptable.xlsx"];
 function assertSimpleArchive(files) {
   for (const name of csvNames) assert.ok(files.has(name), name);
   for (const name of files.keys()) {
@@ -277,8 +277,8 @@ function assertSimpleArchive(files) {
         assert.ok(name.length <= 190, "Windows-friendly relative path");
     } else
       assert.ok(
-        csvNames.includes(name),
-        "only accounting CSVs at archive root",
+        [...csvNames, "rapprochement-bancaire.csv"].includes(name),
+        "only accounting tables at archive root",
       );
   }
 }
@@ -876,5 +876,58 @@ test("le ZIP annuel comprend les attentes et conserve une annulation uniquement 
     const payments = csvRows(files.get("reglements.csv"));
     assert.ok(!payments.some(p => p["ID opération"] === "insurance-1"));
     assert.ok([...files.keys()].every(name => !/\.(json|md)$/i.test(name)));
+  } finally { await h.close(); }
+});
+
+test("le dossier contient un vrai Excel et les correspondances bancaires validées, y compris les lignes non attribuées", async () => {
+  const h = await harness();
+  try {
+    const owner = await account(h);
+    await populate(h, owner);
+    owner.state.bankImports = [{ id: "bank-import", name: "caisse-epargne-janvier.csv", importedAt: "2026-02-01T10:00:00.000Z" }];
+    owner.state.bankLines = [
+      { id: "bank-group", importId: "bank-import", date: "2026-01-16", valueDate: "2026-01-17", label: "VIREMENT GROUPÉ", amountCents: 127500, reference: "CE-001", sourceLineNumber: 2 },
+      { id: "bank-insurance", importId: "bank-import", date: "2026-01-20", valueDate: "", label: "ASSURANCE", amountCents: -4200, reference: "CE-002", sourceLineNumber: 3 },
+      { id: "bank-unknown", importId: "bank-import", date: "2026-01-31", valueDate: "", label: "VIREMENT À IDENTIFIER", amountCents: 12345, reference: "", sourceLineNumber: 4 },
+    ];
+    owner.state.bankMatches = [
+      { id: "bank-match-group", bankLineId: "bank-group", validatedAt: "2026-02-01T10:30:00.000Z", allocations: [
+        { transactionId: "rent-1", paymentId: "p-jan", amountCents: 42500 },
+        { transactionId: "outside-1", paymentId: "p-outside", amountCents: 85000 },
+      ] },
+      { id: "bank-match-insurance", bankLineId: "bank-insurance", validatedAt: "2026-02-01T10:40:00.000Z", allocations: [
+        { transactionId: "insurance-1", paymentId: "p-insurance", amountCents: 4200 },
+      ] },
+    ];
+    await save(h, owner);
+    const response = await h.request("/api/exports/accountant", { cookie: owner.cookie, body: dates });
+    assert.equal(response.status, 200);
+    const files = zipFiles(response.bytes);
+    assertSimpleArchive(files);
+    assert.ok(files.has("cap-sci-comptable.xlsx"));
+    const workbook = zipFiles(files.get("cap-sci-comptable.xlsx"));
+    const definition = workbook.get("xl/workbook.xml").toString();
+    assert.match(definition, /name="Opérations"/);
+    assert.match(definition, /name="Règlements"/);
+    assert.match(definition, /name="Rapprochement bancaire"/);
+    assert.match(definition, /name="Biens"/);
+    assert.match(workbook.get("xl/worksheets/sheet3.xml").toString(), /VIREMENT GROUPÉ/);
+    assert.match(workbook.get("xl/worksheets/sheet3.xml").toString(), /<v>1275<\/v>/);
+    assert.match(workbook.get("xl/worksheets/sheet3.xml").toString(), /À rapprocher — Non attribué/);
+    const bank = csvRows(files.get("rapprochement-bancaire.csv"));
+    assert.equal(bank.length, 4);
+    assert.equal(bank.filter(row => row["Crédit bancaire EUR"] === "1275,00").length, 1);
+    assert.equal(bank.find(row => row["ID opération"] === "outside-1")["Règlement dans la plage de dates"], "Non — hors plage");
+    assert.equal(bank.find(row => row["ID ligne bancaire"] === "bank-unknown")["Nom court du bien"], "Non attribué");
+    const settlements = csvRows(files.get("reglements.csv"));
+    assert.equal(settlements.length, 2);
+    assert.equal(settlements.find(row => row["ID règlement"] === "p-jan")["Références bancaires"], "CE-001");
+    assert.equal(settlements.find(row => row["ID règlement"] === "p-jan")["Montant réglé EUR"], "425,00");
+    const noBank = await h.request("/api/exports/accountant", { cookie: owner.cookie, body: { ...dates, includeBankReconciliation: false } });
+    assert.equal(noBank.status, 200);
+    const excluded = zipFiles(noBank.bytes);
+    assert.equal(excluded.has("rapprochement-bancaire.csv"), false);
+    assert.equal(excluded.get("reglements.csv").toString().includes("CE-001"), false);
+    assert.ok(zipFiles(excluded.get("cap-sci-comptable.xlsx")).has("xl/worksheets/sheet3.xml"));
   } finally { await h.close(); }
 });

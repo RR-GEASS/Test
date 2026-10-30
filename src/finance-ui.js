@@ -28,6 +28,7 @@ import {
 } from "./model.js";
 import { icon, esc } from "./ui.js";
 import { createBankCheckUI } from "./bank-check-ui.js";
+import { assertNoBankMatch } from "./bank-reconciliation.js";
 const frequencies = [
   { id: "monthly", label: "Mensuelle" },
   { id: "quarterly", label: "Trimestrielle" },
@@ -592,6 +593,7 @@ export function createFinanceUI(ctx) {
           "Le montant sera retiré de la trésorerie à sa date initiale. L’échéance restera dans le suivi.",
           "Annuler le règlement",
           confirmation => saveDialog(confirmation, "Le règlement a été annulé.", () => {
+            assertNoBankMatch(getState(), { transactionId: id, paymentId });
             const transaction = getState().transactions.find(row => row.id === id);
             transaction.payments = getPayments(transaction).filter((p) => p.id !== paymentId);
             transaction.status = "pending";
