@@ -29,6 +29,7 @@ import {
   getForecast,
   suggestedAllocation,
   validateSupplier, validateTenant, validateLease, validateBankCheck, bankBalanceAt,
+  leaseRentAt, applyLeaseRentChange, cancelTransaction, validateRentRecurrence,
 } from "../src/model.js";
 const property = {
   id: "p1",
@@ -780,7 +781,7 @@ test("un export annuel sépare les règlements partiels des années voisines et 
   );
   assert.equal(
     getSummary(s, { year: 2027, today: "2027-02-01" }).pendingIncome,
-    0,
+    35000,
   );
 });
 
@@ -909,8 +910,8 @@ test("le CSV de trésorerie distingue la ventilation prévue du prêt des règle
   const rows = csv.replace(/^\ufeff/, "").split("\r\n").map((row) => row.split(";").map((cell) => cell.slice(1, -1)));
   const column = rows[0].indexOf("Capital prévu du prêt EUR");
   assert.ok(column > 0);
-  assert.deepEqual(rows[1].slice(column), ["750,00", "220,00", "30,00"]);
-  assert.deepEqual(rows[2].slice(column), ["", "", ""]);
+  assert.deepEqual(rows[1].slice(column,column+3), ["750,00", "220,00", "30,00"]);
+  assert.deepEqual(rows[2].slice(column,column+3), ["", "", ""]);
   const optional = validateTransaction(loanInput({ capital: "1000", interest: "", insurance: "  " }), s);
   assert.deepEqual(optional.errors, {});
   assert.equal(optional.value.interestCents, 0);
@@ -1060,4 +1061,88 @@ test("les rattachements fournisseur-bien restent des identifiants validés dans 
   const invalid = structuredClone(s); invalid.properties[0].supplierIds = ["inconnu"];
   assert.throws(() => parseBackup(invalid), /fournisseur/i);
   assert.ok(validateProperty({...s.properties[0],rent:"800",charges:"50",supplierIds:["inconnu"]},s).errors.supplierIds);
+});
+
+
+test("le tableau courant conserve les impayés des années précédentes, même partiellement réglés", () => {
+  const s = fixture();
+  s.transactions = [tx({date:"2025-12-01",dueDate:"2025-12-01",status:"pending",amountCents:80000,rentCents:80000,chargesCents:0,payments:[{id:"p",date:"2026-01-10",amountCents:40000,rentCents:40000,chargesCents:0}]})];
+  const summary = getSummary(s,{year:2026,today:"2026-02-01"});
+  assert.equal(summary.pendingIncome,40000);
+  assert.equal(summary.overdue.length,1);
+  assert.equal(summary.pending[0].id,"t1");
+  assert.equal(summary.income,40000);
+});
+
+test("un changement de loyer daté met à jour les échéances non pointées et conserve les règlements", () => {
+  const s = directoryFixture();
+  const lease = s.leases[0];
+  lease.startDate = "2026-01-01";
+  const recurrence = validateRecurrence({id:"rent-rule",type:"income",category:"rent",propertyId:lease.propertyId,tenantId:lease.tenantId,leaseId:lease.id,startDate:"2026-01-05",frequency:"monthly",rent:"800",charges:"50"},s).value;
+  s.recurrences.push(recurrence);
+  generateRecurringTransactions(s,"2026-04-30");
+  recordPayment(s,s.transactions[2].id,{date:"2026-03-05",amount:"100"});
+  const paid = structuredClone(s.transactions[2]);
+  const january = structuredClone(s.transactions[0]);
+  const result=applyLeaseRentChange(s,lease.id,{effectiveDate:"2026-02-01",rent:"850",charges:"60"});
+  assert.deepEqual(result,{updated:2,skipped:1});
+  assert.deepEqual(s.transactions[0],january);
+  assert.deepEqual(s.transactions[2],paid);
+  assert.equal(s.transactions[1].amountCents,91000);
+  assert.equal(s.transactions[3].rentCents,85000);
+  assert.deepEqual(leaseRentAt(lease,"2026-01-31"),{rentCents:80000,chargesCents:5000,amountCents:85000});
+  assert.equal(leaseRentAt(lease,"2026-02-01").amountCents,91000);
+  const restored=parseBackup(serializeBackup(s));
+  assert.deepEqual(restored.leases[0].rentChanges,lease.rentChanges);
+  generateRecurringTransactions(restored,"2026-05-31");
+  assert.equal(restored.transactions.at(-1).amountCents,91000);
+  const forecast=getForecast(restored,{today:"2026-06-01",months:2});
+  assert.equal(forecast.months[0].income,91000);
+  const before=structuredClone(s);
+  assert.throws(()=>applyLeaseRentChange(s,lease.id,{effectiveDate:"2026-02-01",rent:"900",charges:"60"}));
+  assert.deepEqual(s,before);
+});
+
+test("une hausse future ne modifie pas le loyer avant sa date d’effet", () => {
+  const s=directoryFixture(), lease=s.leases[0];
+  applyLeaseRentChange(s,lease.id,{effectiveDate:"2027-01-01",rent:"900",charges:"50"});
+  assert.equal(leaseRentAt(lease,"2026-12-31").rentCents,80000);
+  assert.equal(leaseRentAt(lease,"2027-01-01").rentCents,90000);
+  const bad=structuredClone(s);bad.leases[0].rentChanges[0].rentCents=-1;
+  assert.throws(()=>parseBackup(bad));
+});
+
+test("une opération annulée conserve sa trace sans affecter la banque, les impayés ou les projections", () => {
+  const s=fixture();
+  s.transactions=[tx({type:"expense",category:"insurance",amountCents:10000,payments:[{id:"payment",date:"2026-03-01",amountCents:10000,rentCents:0,chargesCents:0}]})];
+  const payments=structuredClone(s.transactions[0].payments);
+  cancelTransaction(s,"t1","Erreur de saisie","2026-03-02");
+  assert.deepEqual(s.transactions[0].payments,payments);
+  assert.equal(getPayments(s.transactions[0]).length,0);
+  assert.equal(remainingCents(s.transactions[0]),0);
+  assert.equal(transactionStatus(s.transactions[0]),"cancelled");
+  assert.equal(filterTransactions(s).length,0);
+  assert.equal(filterTransactions(s,{status:"cancelled"}).length,1);
+  assert.equal(getSummary(s,{year:2026,today:"2026-04-01"}).expense,0);
+  assert.equal(bankBalanceAt(s,"2026-04-01"),100000);
+  assert.equal(getForecast(s,{today:"2026-04-01"}).openingBalance,100000);
+  assert.throws(()=>recordPayment(s,"t1",{date:"2026-03-03",amount:"1"}));
+  assert.throws(()=>cancelTransaction(s,"t1","Encore","2026-03-03"));
+  const restored=parseBackup(serializeBackup(s));
+  assert.equal(restored.transactions[0].cancellationReason,"Erreur de saisie");
+  assert.deepEqual(restored.transactions[0].payments,payments);
+  assert.ok(exportCSV(s,s.transactions).includes("Annulée"));
+  const invalid=structuredClone(s);invalid.transactions[0].cancellationReason="";
+  assert.throws(()=>parseBackup(invalid));
+});
+
+
+test("une location ne reçoit pas deux loyers périodiques actifs sur une même période", () => {
+  const state={recurrences:[{id:"first",active:true,category:"rent",leaseId:"lease",startDate:"2026-01-01",endDate:"2026-06-30"}]};
+  const next={id:"next",active:true,category:"rent",leaseId:"lease",startDate:"2026-06-01",endDate:""};
+  assert.match(validateRentRecurrence(next,state),/double loyer/);
+  assert.equal(validateRentRecurrence({...next,startDate:"2026-07-01"},state),"");
+  assert.equal(validateRentRecurrence({...next,active:false},state),"");
+  assert.equal(validateRentRecurrence({...next,id:"first"},state),"");
+  assert.equal(validateRentRecurrence({...next,leaseId:"other"},state),"");
 });

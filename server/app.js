@@ -21,6 +21,9 @@ import {
   synchronizeAttachmentNames,
 } from "./attachments.js";
 import { installExports } from "./exports.js";
+import { installHistory, recordStateChanges, validateProtectedChanges } from "./history.js";
+import { installMaintenance } from "./maintenance.js";
+import { createAccess } from "./access.js";
 import { installEntityDocuments } from "./entity-documents.js";
 
 const derive = promisify(scrypt);
@@ -38,6 +41,7 @@ export function createApp({
   trustProxy = process.env.SCI_TRUST_PROXY === "1",
   authLimit = 30,
   allowTestFixtures = false,
+  registrationMode = process.env.SCI_REGISTRATION_MODE || (production ? "closed" : "open"),
 } = {}) {
   if (dbPath !== ":memory:")
     mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
@@ -46,6 +50,7 @@ export function createApp({
     CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, salt TEXT NOT NULL, state TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);`);
+  const access = createAccess(db);
   const app = express();
   app.disable("x-powered-by");
   if (trustProxy) app.set("trust proxy", 1);
@@ -130,7 +135,10 @@ export function createApp({
       return res
         .status(401)
         .json({ error: "Connectez-vous pour accéder à votre SCI." });
-    req.user = user;
+    const context = access.resolve(user);
+    req.actor = user;
+    req.user = context.owner;
+    req.accessRole = context.role;
     next();
   }
   function issueSession(req, res, user) {
@@ -163,24 +171,28 @@ export function createApp({
     }
     return user;
   }
-  const payload = (user) => {
-    user = refreshRecurring(user);
+  const payload = (actor) => {
+    const context = access.resolve(actor);
+    const owner = refreshRecurring(context.owner);
     return {
-      user: { id: user.id, email: user.email },
-      state: JSON.parse(user.state),
-      revision: user.revision,
+      user: { id: actor.id, email: actor.email, ownerId: owner.id, role: context.role },
+      state: JSON.parse(owner.state),
+      revision: owner.revision,
     };
   };
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
   app.get("/api/session", requireUser, (req, res) =>
-    res.json(payload(req.user)),
+    res.json(payload(req.actor)),
   );
   installAttachments(app, db, requireUser);
   installEntityDocuments(app, db, requireUser);
   installExports(app, db, requireUser);
+  installHistory(app, db, requireUser);
+  installMaintenance(app, db, requireUser);
+  access.install(app, requireUser, payload);
   app.post("/api/register", async (req, res, next) => {
     try {
-      const { email, password, name } = req.body || {};
+      const { email, password, name, invitationToken } = req.body || {};
       if (
         typeof email !== "string" ||
         email.length > 254 ||
@@ -193,6 +205,13 @@ export function createApp({
           error:
             "Saisissez un e-mail valide et un mot de passe de 12 à 128 caractères.",
         });
+      const checkRegistration = () => {
+        const invited = invitationToken && access.invitation(invitationToken, email);
+        if (invitationToken && !invited) throw Object.assign(new Error("L’invitation est invalide, expirée ou destinée à une autre adresse."), { status: 403 });
+        if (registrationMode === "closed" && db.prepare("SELECT count(*) AS n FROM users").get().n && !invited)
+          throw Object.assign(new Error("Les inscriptions sont fermées. Demandez une invitation au propriétaire de la SCI."), { status: 403 });
+      };
+      checkRegistration();
       const state = createEmptyState("IS");
       const settings = validateSettings({
         ...state.settings,
@@ -208,11 +227,15 @@ export function createApp({
       const salt = randomBytes(16).toString("hex");
       const hash = (await derive(password, salt, 64)).toString("hex");
       const id = randomBytes(16).toString("hex");
+      checkRegistration();
       try {
+        db.exec("BEGIN IMMEDIATE");
         db.prepare(
           "INSERT INTO users (id,email,password_hash,salt,state) VALUES (?,?,?,?,?)",
         ).run(id, normalizedEmail, hash, salt, JSON.stringify(state));
+        db.exec("COMMIT");
       } catch (error) {
+        if (db.isTransaction) db.exec("ROLLBACK");
         if (
           error.code === "ERR_SQLITE_ERROR" &&
           String(error.message).includes("UNIQUE")
@@ -226,6 +249,7 @@ export function createApp({
       issueSession(req, res, user);
       res.status(201).json(payload(user));
     } catch (error) {
+      if (error.status) return res.status(error.status).json({ error: error.message });
       next(error);
     }
   });
@@ -260,6 +284,24 @@ export function createApp({
       next(error);
     }
   });
+  app.post("/api/account/password", requireUser, async (req, res, next) => {
+    try {
+      const { currentPassword, newPassword } = req.body || {};
+      if (typeof currentPassword !== "string" || currentPassword.length > 128 || typeof newPassword !== "string" || newPassword.length < 12 || newPassword.length > 128)
+        return res.status(400).json({ error: "Renseignez le mot de passe actuel et un nouveau mot de passe de 12 à 128 caractères." });
+      const current = req.actor;
+      const derived = await derive(currentPassword, current.salt, 64);
+      if (!timingSafeEqual(derived, Buffer.from(current.password_hash, "hex")))
+        return res.status(403).json({ error: "Le mot de passe actuel est incorrect." });
+      const salt = randomBytes(16).toString("hex");
+      const passwordHash = (await derive(newPassword, salt, 64)).toString("hex");
+      const changed = db.prepare("UPDATE users SET password_hash=?,salt=? WHERE id=? AND password_hash=?").run(passwordHash, salt, current.id, current.password_hash);
+      if (!changed.changes) return res.status(409).json({ error: "Le mot de passe a changé entre-temps. Reconnectez-vous." });
+      db.prepare("DELETE FROM sessions WHERE user_id=?").run(current.id);
+      issueSession(req, res, current);
+      res.json({ ok: true });
+    } catch (error) { next(error); }
+  });
   app.post("/api/logout", (req, res) => {
     const token = sessionToken(req);
     if (token)
@@ -268,8 +310,8 @@ export function createApp({
     res.json({ ok: true });
   });
   app.put(["/api/state", ...(!production && allowTestFixtures ? ["/api/test-fixtures/state"] : [])], requireUser, (req, res) => {
-    const { state: input, revision, accountId } = req.body || {};
-    if (accountId !== req.user.id)
+    const { state: input, revision, accountId, ownerId } = req.body || {};
+    if (accountId !== req.actor.id || (ownerId !== undefined && ownerId !== req.user.id))
       return res.status(409).json({
         error:
           "Le compte connecté a changé. Reconnectez-vous au compte d’origine avant d’enregistrer ces modifications.",
@@ -277,6 +319,9 @@ export function createApp({
       });
     if (!Number.isSafeInteger(revision) || revision < 0)
       return res.status(400).json({ error: "Version des données invalide." });
+    const latest = db.prepare("SELECT revision FROM users WHERE id=?").get(req.user.id);
+    if (!latest || latest.revision !== revision)
+      return res.status(409).json({ error: "Votre SCI a été modifiée sur un autre appareil. Exportez vos modifications puis rechargez les données.", code: "conflict" });
     let state;
     try {
       state = parseBackup(input);
@@ -284,7 +329,10 @@ export function createApp({
       const previous = JSON.parse(db.prepare("SELECT state FROM users WHERE id=?").get(req.user.id).state);
       // Fixture loading is available only in the explicitly isolated test app.
       // All normal writes, including those from that app, enforce entry rules.
-      if (req.path !== "/api/test-fixtures/state") validateChangedEntries(state, previous);
+      if (req.path !== "/api/test-fixtures/state") {
+        validateChangedEntries(state, previous);
+        validateProtectedChanges(previous, state);
+      }
       generateRecurringTransactions(
         state,
         monthEnd(
@@ -323,6 +371,10 @@ export function createApp({
         });
       }
       synchronizeAttachmentNames(db, req.user.id, state);
+      recordStateChanges(db, {
+        ownerId: req.user.id, actorId: req.actor.id, actorEmail: req.actor.email,
+        before: JSON.parse(current.state), after: state,
+      });
       db.exec("COMMIT");
     } catch (error) {
       db.exec("ROLLBACK");

@@ -838,3 +838,43 @@ test("les baux et avenants liés sont ajoutés uniquement sur demande, sans docu
     await h.close();
   }
 });
+
+
+test("le ZIP annuel comprend les attentes et conserve une annulation uniquement sur demande sans règlement fictif", async () => {
+  const h = await harness();
+  try {
+    const owner = await account(h);
+    await populate(h, owner);
+    Object.assign(owner.state.transactions.find(t => t.id === "insurance-1"), {
+      cancelledAt: "2026-01-21", cancellationReason: "Facture comptée deux fois",
+    });
+    await save(h, owner);
+    await upload(h, owner, "insurance-1", "assurance-annulee.pdf");
+    const options = { startDate: "2026-01-01", endDate: "2026-12-31", dateBasis: "annual", includeDocuments: true };
+    let response = await h.request("/api/exports/accountant", { cookie: owner.cookie, body: options });
+    assert.equal(response.status, 200);
+    let files = zipFiles(response.bytes);
+    assertSimpleArchive(files);
+    let operations = csvRows(files.get("operations.csv"));
+    assert.ok(operations.some(t => t["ID opération"] === "pending-1"), "unpaid current-year invoice included");
+    assert.ok(operations.some(t => t["ID opération"] === "rent-1"), "current-year payment of prior debt included");
+    assert.ok(!operations.some(t => t["ID opération"] === "insurance-1"));
+    assert.equal(documentEntries(files).length, 0);
+    response = await h.request("/api/exports/accountant", { cookie: owner.cookie, body: { ...options, includeCancelled: true } });
+    assert.equal(response.status, 200);
+    files = zipFiles(response.bytes);
+    assertSimpleArchive(files);
+    operations = csvRows(files.get("operations.csv"));
+    const trace = operations.find(t => t["ID opération"] === "insurance-1");
+    assert.equal(trace["Statut à la date de l’export"], "Annulée");
+    assert.equal(trace["Date d’annulation"], "2026-01-21");
+    assert.equal(trace["Motif d’annulation"], "Facture comptée deux fois");
+    assert.equal(trace["Règlements conservés avant annulation EUR"], "42,00");
+    assert.equal(trace["Total réglé historique EUR"], "0,00");
+    assert.equal(trace["Décaissements dans la plage EUR"], "0,00");
+    assert.equal(documentEntries(files).length, 1);
+    const payments = csvRows(files.get("reglements.csv"));
+    assert.ok(!payments.some(p => p["ID opération"] === "insurance-1"));
+    assert.ok([...files.keys()].every(name => !/\.(json|md)$/i.test(name)));
+  } finally { await h.close(); }
+});

@@ -6,6 +6,42 @@ Un site en français pour suivre les biens, les loyers et la trésorerie d’une
 
 ![Aperçu du tableau de bord Cap SCI, avec des données fictives](docs/apercu.png)
 
+## Le parcours conseillé
+
+Le menu principal rassemble **Vue d’ensemble, Pointage mensuel, Opérations, Biens immobiliers et Export comptable**. Les fiches et périodicités sont regroupées dans **Dossiers** ; les accès, sauvegardes, historique, documents et contrôles sont dans **Outils et réglages**. Le bouton **Aide** propose des étapes et bonnes pratiques adaptées à la page ; une aide est aussi accessible dans les formulaires, sans abandonner la saisie.
+
+1. Réglez le nom de la SCI, la date et le montant du solde bancaire initial dans les paramètres.
+2. Pour les loyers, créez le bien, le locataire, puis la location et joignez le bail.
+3. Depuis la location, préparez le loyer périodique. Si une périodicité existe déjà, elle est ouverte plutôt que doublée.
+4. Pointez uniquement les mouvements réellement constatés sur le relevé, avec leur date réelle et leurs justificatifs.
+5. Comparez le solde bancaire en fin de pointage, puis préparez le dossier à transmettre au comptable.
+
+### Changer un loyer et corriger une erreur
+
+La location conserve le contrat initial et les changements de loyer datés. Utilisez **Modifier le loyer** dans son dossier, avec une date d’effet. Les prochaines échéances et prévisions utilisent les montants correspondant à leur date. Les échéances déjà réglées, même partiellement, restent conservées ; un compte rendu indique celles qui ne sont pas modifiées. La fiche du bien affiche le montant du contrat en cours au lieu d’en demander une deuxième saisie. Les références de facture se renseignent sur chaque opération et non sur le modèle périodique.
+
+Une opération réglée se corrige par **Annuler l’opération**, avec un motif. Elle est retirée des soldes et exports courants mais garde ses paiements d’origine et sa trace dans l’historique. Créez ensuite la bonne opération si nécessaire. Une opération prévue non réglée peut être supprimée, avec une trace. Les annulations sont consultables par le filtre « Annulées » et peuvent être incluses explicitement dans l’export.
+
+Une location créée par erreur peut être supprimée par le propriétaire uniquement si elle est réellement vide : aucun document, règlement/opération, périodicité ou changement de loyer. Le serveur vérifie ces conditions au moment de la suppression.
+
+### Utiliser la même SCI à deux
+
+Dans **Outils et réglages → Accès et mot de passe**, le propriétaire crée une invitation liée à l’e-mail de la deuxième personne et lui transmet le lien affiché. Aucun message n’est envoyé automatiquement. Le lien est valable sept jours et ne peut être accepté qu’une fois, avec l’adresse prévue. La personne crée son identifiant ou se connecte à un compte vide, puis confirme **Rejoindre la SCI**. Les deux personnes partagent alors les mêmes données, avec leur propre mot de passe. Les invitations ne fusionnent pas deux espaces déjà remplis.
+
+Deux accès maximum sont prévus. Le propriétaire peut retirer le deuxième accès, ce qui invalide ses sessions. En production, le premier compte reste créable ; les inscriptions suivantes nécessitent une invitation par défaut (`SCI_REGISTRATION_MODE=closed`). Le mode de développement reste ouvert pour les essais.
+
+### Préparer l’année du comptable
+
+Dans l’export, **Dossier annuel comptable** retient les opérations dont l’échéance ou la période concerne l’année, ainsi que les règlements de l’année. Cela inclut les factures non réglées et les règlements de dettes antérieures. Les annulations restent exclues par défaut. Vérifiez la sélection et les pièces avec le comptable : il s’agit d’un dossier de préparation, pas d’un FEC ou d’une déclaration fiscale.
+
+### Sauvegardes et documents
+
+Le service Compose `backup` crée automatiquement une sauvegarde SQLite complète et vérifiée au démarrage puis toutes les 24 heures ; il conserve les 30 dernières copies par défaut. L’intervalle et la rétention se règlent dans `.env`. Le volume `sci_backups` est séparé de la base active, mais reste **sur la même machine**. Prévoyez une copie régulière sur un autre support ; cette configuration ne transfère pas automatiquement les fichiers vers un autre ordinateur ou un cloud. Pour vérifier le service : `docker compose logs --tail=30 backup`.
+
+**Historique des corrections** permet de retrouver auteur, date et changements. Une restauration JSON explicite accepte les anciennes données lisibles et conserve un instantané de l’état précédent (les dix derniers sont téléchargeables depuis l’historique). Le JSON et ces instantanés n’incluent pas les fichiers. Les sauvegardes SQLite complètes contiennent comptes, accès, opérations et documents.
+
+**Espace documentaire** indique les fichiers utilisés et le quota commun. Le propriétaire peut nettoyer individuellement les documents devenus sans fiche ou opération après suppression/import. Sauvegardez ou téléchargez les pièces utiles avant de confirmer leur suppression définitive. Les documents d’une fiche désactivée ne sont pas considérés comme orphelins.
+
 ## Essayer sous Windows
 
 Installez **Node.js 24 LTS ou plus récent**. Téléchargez le ZIP du dépôt, décompressez-le et ouvrez PowerShell dans le dossier qui contient `package.json`.
@@ -17,7 +53,7 @@ npm.cmd run dev
 
 Ouvrez l’adresse indiquée par Vite dans le terminal (port 5173 par défaut). Gardez le terminal ouvert. **Ctrl + C** arrête les deux serveurs.
 
-Le mode démonstration présente des biens, locataires et montants **fictifs**. Cliquez sur **Créer mon espace** pour créer votre propre compte : votre SCI démarre vide, au régime IS. Aucun e-mail de validation n’est envoyé. Choisissez un mot de passe d’au moins 12 caractères et conservez-le : cette version ne comporte pas encore de réinitialisation du mot de passe par e-mail.
+Le mode démonstration présente des biens, locataires et montants **fictifs**. Cliquez sur **Créer mon espace** pour créer votre propre compte : votre SCI démarre vide, au régime IS. Aucun e-mail de validation n’est envoyé. Choisissez un mot de passe d’au moins 12 caractères. La modification est accessible dans les accès ; une récupération administrateur est prévue en cas d’oubli.
 
 `npm.cmd run dev` lance à la fois l’API Node.js (port 3001) et Vite (port 5173). Le serveur doit rester actif pour enregistrer les données. L’ancienne clé de stockage de l’application de tâches Atelier n’est pas modifiée.
 
@@ -30,7 +66,7 @@ Le mode démonstration présente des biens, locataires et montants **fictifs**. 
 - Distinction entre loyers, provisions, apports, emprunts, intérêts, capital remboursé et dépôts de garantie.
 - Échéances en attente, enregistrées comme réglées à la **date effective du règlement**, avec conservation de l’échéance initiale dans l’export.
 - Export CSV compatible Excel ; sauvegarde et restauration JSON avec validation et confirmation.
-- Connexion du même compte depuis plusieurs navigateurs. Les données sont rechargées au retour sur l’onglet ou au rechargement de la page. Les conflits d’édition sont signalés et ne remplacent pas les changements d’un autre appareil.
+- Deux accès personnels possibles à la même SCI, et connexion depuis plusieurs navigateurs. Les données sont rechargées au retour sur l’onglet ou au rechargement de la page. Les conflits d’édition sont signalés et ne remplacent pas les changements d’un autre appareil.
 - Mode sombre et interface pour téléphone.
 
 Les montants de la fiche du bien servent de référence. Configurez ensuite une **opération périodique** pour préparer les échéances : la seule création d’un bien ne suffit pas. Les quittances ne sont pas générées. Les opérations prévues et les règlements datés après la date d’arrêté ne gonflent pas la trésorerie.
@@ -81,13 +117,13 @@ Le serveur contrôle les nouvelles opérations, périodicités et informations e
 
 1. Donnez un **nom court unique** à chaque bien, par exemple « République T2 ». L’adresse reste dans la fiche. Les anciens noms sont conservés ; renommez les éventuels doublons avant de créer de nouvelles fiches.
 2. Ouvrez **Opérations périodiques → Nouvelle périodicité** : choisissez le type, le bien, la catégorie, la fréquence mensuelle/trimestrielle/annuelle et les dates de début et de fin. Le jour du début est conservé ; le 31 tombe au dernier jour des mois plus courts, sans décaler les mois suivants.
-3. Pour un loyer, renseignez séparément le hors-charges et les provisions. Une seule échéance et un seul paiement peuvent couvrir les deux. Les nouveaux libellés sont proposés automatiquement : **Type · Nom court · Catégorie · Période**, avec un détail libre facultatif. La période concernée reste distincte de la date réelle du paiement.
+3. Pour un loyer lié à une location, les montants hors charges et provisions viennent du contrat et de ses changements datés. Une seule échéance et un seul paiement peuvent couvrir les deux. Les nouveaux libellés sont proposés automatiquement : **Type · Nom court · Catégorie · Période**, avec un détail libre facultatif. La période concernée reste distincte de la date réelle du paiement.
 4. Les échéances sont préparées jusqu’à la fin du mois courant lors de l’ouverture/actualisation du compte, et après l’enregistrement d’une périodicité. Les mois manqués sont rattrapés depuis le début choisi. Aucun paiement n’est présumé effectué ; il n’y a ni connexion bancaire ni service payant ajouté.
 5. Dans **Pointage mensuel**, comparez les lignes à votre relevé, cochez les règlements réellement constatés et choisissez leur date. Une confirmation précède la validation groupée. Les lignes non cochées restent prévues ou en retard.
 6. Pour un **paiement partiel**, indiquez le montant reçu. La ventilation loyer/provisions est proposée proportionnellement en centimes, et vous pouvez la modifier. Plusieurs règlements peuvent solder la même échéance. « Règlements » affiche leurs dates et permet d’annuler une erreur.
 7. **Loyers impayés** retrouve les loyers et provisions échus non soldés, paiements partiels compris. **Prévisionnel** projette les 12 mois à venir à partir du solde réel et des opérations prévues, sans compter deux fois les échéances déjà créées. Les impayés échus sont affichés séparément : leur encaissement n’est pas supposé certain.
 
-Mettre une périodicité en pause ou la supprimer conserve toutes les échéances déjà créées et leurs règlements. La reprise repart d’aujourd’hui, sans recréer les mois suspendus. Modifier un modèle s’applique aux échéances non encore créées ; corrigez séparément une échéance existante si nécessaire. Archiver un bien met ses périodicités en pause.
+Mettre une périodicité en pause ou la supprimer conserve toutes les échéances déjà créées et leurs règlements. La reprise repart d’aujourd’hui, sans recréer les mois suspendus. Pour les loyers liés à une location, utilisez le changement daté du loyer afin de traiter aussi les échéances non réglées déjà préparées. Pour les autres périodicités, modifier le modèle s’applique aux échéances non encore créées. Archiver un bien met ses périodicités en pause.
 
 Pour un **prêt**, choisissez la catégorie **Échéance de prêt** dans une opération ou une périodicité. Renseignez **Capital remboursé**, **Intérêts** et **Assurance emprunteur** : leur somme donne le montant total, sans créer trois prélèvements. L’assurance peut rester à zéro si elle est prélevée séparément ; saisissez alors une opération distincte pour éviter de la compter deux fois. Les anciennes catégories « Capital d’emprunt remboursé » et « Intérêts d’emprunt » restent disponibles.
 
@@ -181,6 +217,8 @@ Les données d’un compte sont conservées sur **le serveur auquel vous vous co
 
 ## Mise en ligne sur un VPS avec Docker
 
+Cette configuration publie le site en HTTPS sur les ports 80/443. Pour un accès exclusivement par WireGuard sur un PC Debian, adaptez l’écoute réseau, le pare-feu et le certificat HTTPS à ce réseau privé avant le lancement ; Compose seul ne limite pas l’accès aux deux appareils. Le réveil et l’arrêt automatique du PC se configurent sur son infrastructure, indépendamment de l’application.
+
 Prérequis : un VPS avec Docker et Docker Compose, une sauvegarde du disque, les ports 80 et 443 accessibles, et un sous-domaine pointant vers son adresse IP. Un seul exemplaire du serveur d’application doit utiliser cette base SQLite locale.
 
 1. Récupérez le dépôt sur le VPS et placez-vous dans son dossier.
@@ -195,11 +233,11 @@ Prérequis : un VPS avec Docker et Docker Compose, une sauvegarde du disque, les
 
 4. Ouvrez votre sous-domaine en HTTPS et créez votre compte. Caddy obtient le certificat TLS si le DNS et les ports sont correctement configurés.
 
-La syntaxe de Compose, la construction de l’image et le lancement Node.js de production ont été vérifiés. Un essai HTTPS local avec certificat vérifié a aussi validé l’inscription, l’écriture, la sauvegarde et la conservation des données après redémarrage. Le déploiement Compose complet, le DNS et le certificat HTTPS public devront être vérifiés sur l’hébergement choisi avant la saisie de données réelles.
+La syntaxe de Compose et le démarrage du runtime de production font partie des vérifications. Un essai HTTPS local avec certificat vérifié a aussi validé l’inscription, l’écriture, la sauvegarde et la conservation des données après redémarrage. Le déploiement Compose complet, le DNS et le certificat HTTPS public devront être vérifiés sur l’hébergement choisi avant la saisie de données réelles.
 
-Le volume `sci_data` conserve la base lors des redémarrages et des mises à jour. **Ne supprimez pas ce volume** pour mettre à jour le site. Les cookies de production nécessitent HTTPS. Le serveur d’application n’est pas exposé directement au réseau public ; Caddy est le point d’entrée. Les sessions expirent au bout de sept jours.
+Le volume `sci_data` conserve la base lors des redémarrages et des mises à jour. Le volume `sci_backups` conserve les sauvegardes complètes. **Ne supprimez pas ces volumes** pour mettre à jour le site. Les cookies de production nécessitent HTTPS. Le serveur d’application n’est pas exposé directement au réseau public ; Caddy est le point d’entrée. Les sessions expirent au bout de sept jours.
 
-Le projet utilise des mots de passe hachés avec scrypt, des cookies HttpOnly/SameSite, une limite de tentatives de connexion, des contrôles d’origine des écritures et une vérification de version avant chaque enregistrement. Les comptes sont isolés ; partager l’accès à la même SCI se fait avec le même compte dans cette version, sans gestion de collaborateurs.
+Le projet utilise des mots de passe hachés avec scrypt, des cookies HttpOnly/SameSite, une limite de tentatives de connexion, des contrôles d’origine des écritures et une vérification de version avant chaque enregistrement. Deux identifiants individuels peuvent partager une SCI grâce à une invitation. L’historique indique l’auteur des modifications. Le propriétaire gère les invitations, les accès, le nettoyage des documents orphelins et les restaurations.
 
 ### Sauvegarder le serveur
 
@@ -209,9 +247,27 @@ L’export JSON depuis l’application sauvegarde la SCI connectée. Pour une sa
 docker compose exec app node scripts/backup.mjs
 ```
 
-Le fichier est créé dans `/app/data/backups/`. Copiez-le régulièrement hors du serveur et prévoyez une rotation des sauvegardes. Copier seulement le fichier SQLite actif sans son journal ne garantit pas une copie à jour. Le script de sauvegarde utilise l’API de sauvegarde SQLite.
+Avec Compose, le fichier est créé dans `/app/backups/`, sur le volume `sci_backups`, commun à l’application et au service de sauvegarde. Copiez-le régulièrement hors du serveur. Copier seulement le fichier SQLite actif sans son journal ne garantit pas une copie à jour. Le script de sauvegarde utilise l’API de sauvegarde SQLite.
 
 Un compte créé sur votre ordinateur ne migre pas automatiquement sur le serveur : exportez sa SCI en JSON, créez un compte sur le serveur en ligne, puis importez le fichier. Les mots de passe, sessions et fichiers justificatifs ne figurent pas dans les exports JSON de la SCI. Pour déplacer aussi les comptes et justificatifs, migrez la base SQLite complète, serveur arrêté ou à partir d’une sauvegarde cohérente.
+
+## Restauration complète et récupération administrateur
+
+Le script de restauration complète produit une **nouvelle base**, vérifie son intégrité et refuse d’écraser un fichier existant :
+
+```bash
+node scripts/restore.mjs sauvegarde.sqlite nouveau-dossier/atelier.sqlite
+```
+
+Arrêtez l’application avant de remplacer sa base active. Conservez l’ancien dossier et ses journaux SQLite, puis utilisez le dossier restauré comme `SCI_DATA_DIR`. Dans Docker, restaurez d’abord dans un dossier neuf monté à cet effet, puis remplacez le contenu du volume de données uniquement serveur arrêté. Faites un essai sur une copie et vérifiez les comptes, opérations et téléchargements de documents avant de remettre le service en ligne. Ne lancez jamais `docker compose down -v` pour une mise à jour : cela supprime les volumes.
+
+En cas de mot de passe oublié, l’administrateur peut utiliser `scripts/reset-password.mjs adresse@example.fr`. Le nouveau mot de passe se fournit sur l’entrée standard, jamais en argument ; le script refuse une saisie terminal directe et ferme les anciennes sessions du compte. Exemple dans un terminal Bash sur le serveur :
+
+```bash
+read -rs -p "Nouveau mot de passe : " SCI_NEW_PASSWORD
+printf '%s\n' "$SCI_NEW_PASSWORD" | docker compose exec -T app node scripts/reset-password.mjs adresse@example.fr
+unset SCI_NEW_PASSWORD
+```
 
 ## Vérifications
 

@@ -7,11 +7,33 @@ services:
       NODE_ENV: production
       PORT: "3000"
       SCI_DATA_DIR: /app/data
+      SCI_BACKUP_DIR: /app/backups
       SCI_TRUST_PROXY: "1"
+      SCI_REGISTRATION_MODE: ${SCI_REGISTRATION_MODE:-closed}
     expose:
       - "3000"
     volumes:
       - sci_data:/app/data
+      - sci_backups:/app/backups
+  backup:
+    build: .
+    stop_grace_period: 2m
+    restart: unless-stopped
+    init: true
+    command: ["node", "scripts/backup-loop.mjs"]
+    healthcheck:
+      disable: true
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      SCI_DATA_DIR: /app/data
+      SCI_BACKUP_DIR: /app/backups
+      SCI_BACKUP_INTERVAL_HOURS: ${SCI_BACKUP_INTERVAL_HOURS:-24}
+      SCI_BACKUP_KEEP: ${SCI_BACKUP_KEEP:-30}
+    volumes:
+      - sci_data:/app/data:ro
+      - sci_backups:/app/backups
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -29,5 +51,6 @@ services:
       - caddy_config:/config
 volumes:
   sci_data:
+  sci_backups:
   caddy_data:
   caddy_config:

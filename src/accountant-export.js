@@ -4,6 +4,7 @@ import {
   clean,
   fold,
   getPayments,
+  leaseRentAt,
   moneyInput,
   paidCents,
   remainingCents,
@@ -12,8 +13,8 @@ import {
   validDate,
 } from "./model.js";
 
-const DATE_BASES = ["payments", "due", "period"];
-const STATUSES = ["paid", "partial", "pending", "overdue"];
+const DATE_BASES = ["payments", "due", "period", "annual"];
+const STATUSES = ["paid", "partial", "pending", "overdue", "cancelled"];
 const TYPES = ["income", "expense"];
 const optionArrays = [
   "propertyIds",
@@ -56,7 +57,7 @@ export function normalizeExportOptions(state, input = {}) {
       fail(`Le filtre « ${key} » contient une valeur inconnue.`);
     options[key] = [...new Set(values)];
   }
-  for (const key of ["includeDocuments", "includeFullPaymentHistory", "includeLeaseDocuments"]) {
+  for (const key of ["includeDocuments", "includeFullPaymentHistory", "includeLeaseDocuments", "includeCancelled"]) {
     if (input[key] !== undefined && typeof input[key] !== "boolean")
       fail("Les options de contenu de l’export sont invalides.");
     options[key] = input[key] ?? key === "includeDocuments";
@@ -68,6 +69,22 @@ export function normalizeExportOptions(state, input = {}) {
     fail("La recherche doit contenir 300 caractères maximum.");
   return options;
 }
+export function annualAccountantOptions(year) {
+  if (!Number.isInteger(year) || year < 1000 || year > 9999)
+    fail("Choisissez une année valide pour le dossier comptable.");
+  return {
+    startDate: `${year}-01-01`, endDate: `${year}-12-31`, dateBasis: "annual",
+    propertyIds: [], categories: [], types: [], statuses: [], query: "",
+    includeDocuments: true, includeFullPaymentHistory: true,
+    includeLeaseDocuments: false, includeCancelled: false,
+  };
+}
+const preservedPayments = (t) => Array.isArray(t.payments) ? t.payments
+  : t.status === "paid" ? [{ date: t.date, amountCents: t.amountCents }] : [];
+const matchesStatus = (t, statuses, today) => !statuses.length ||
+  statuses.includes(transactionStatus(t, today)) ||
+  (!t.cancelledAt && statuses.includes("overdue") && remainingCents(t) > 0 && (t.dueDate || t.occurrenceDate || t.date) < today);
+
 export function parisToday() {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Paris" }).format(
     new Date(),
@@ -84,6 +101,7 @@ export function exportSelection(state, input, { today = parisToday() } = {}) {
     : null;
   const transactions = state.transactions
     .filter((t) => {
+      if (t.cancelledAt && !options.includeCancelled) return false;
       if (selectedOperationIds && !selectedOperationIds.has(t.id)) return false;
       if (
         options.propertyIds.length &&
@@ -93,11 +111,7 @@ export function exportSelection(state, input, { today = parisToday() } = {}) {
       if (options.categories.length && !options.categories.includes(t.category))
         return false;
       if (options.types.length && !options.types.includes(t.type)) return false;
-      if (
-        options.statuses.length &&
-        !options.statuses.includes(transactionStatus(t, today))
-      )
-        return false;
+      if (!matchesStatus(t, options.statuses, today)) return false;
       const p = propertiesById.get(t.propertyId);
       if (
         needle &&
@@ -106,15 +120,16 @@ export function exportSelection(state, input, { today = parisToday() } = {}) {
         ).includes(needle)
       )
         return false;
+      const datePayments = t.cancelledAt ? preservedPayments(t) : getPayments(t);
       if (options.dateBasis === "payments")
-        return getPayments(t).some((p) => inRange(p.date));
+        return datePayments.some((p) => inRange(p.date));
       const due = t.dueDate || t.occurrenceDate || t.date;
       if (options.dateBasis === "due") return inRange(due);
       const period = t.period || due.slice(0, 7);
-      return (
-        period >= options.startDate.slice(0, 7) &&
-        period <= options.endDate.slice(0, 7)
-      );
+      const periodInRange = period >= options.startDate.slice(0, 7) && period <= options.endDate.slice(0, 7);
+      if (options.dateBasis === "annual")
+        return inRange(due) || periodInRange || datePayments.some((p) => inRange(p.date));
+      return periodInRange;
     })
     .sort(
       (a, b) =>
@@ -167,6 +182,7 @@ const statusName = (today) => (t) =>
     partial: "Partiellement réglée",
     pending: "Prévue",
     overdue: "En retard",
+    cancelled: "Annulée",
   })[transactionStatus(t, today)];
 export function accountantCSVs(
   state,
@@ -234,6 +250,9 @@ export function accountantCSVs(
       "Notes",
       "ID périodicité",
       "Date occurrence",
+      "Date d’annulation",
+      "Motif d’annulation",
+      "Règlements conservés avant annulation EUR",
       "Nombre de règlements historiques",
       "Encaissements dans la plage EUR",
       "Décaissements dans la plage EUR",
@@ -295,6 +314,9 @@ export function accountantCSVs(
       t.notes || "",
       t.recurrenceId || "",
       t.occurrenceDate || "",
+      t.cancelledAt || "",
+      t.cancellationReason || "",
+      t.cancelledAt ? moneyInput(preservedPayments(t).reduce((sum, p) => sum + p.amountCents, 0)) : "",
       getPayments(t).length,
       t.type === "income" ? moneyInput(ranged) : "",
       t.type === "expense" ? moneyInput(ranged) : "",
@@ -376,13 +398,14 @@ export function accountantCSVs(
     const propertyLeases = (state.leases || []).filter(l => l.propertyId === p.id);
     const activeLease = propertyLeases.find(l => l.startDate <= today && (!l.endDate || l.endDate >= today));
     const currentTenant = propertyLeases.length ? tenantsById.get(activeLease?.tenantId)?.name || "" : p.tenant;
+    const currentRent = activeLease ? leaseRentAt(activeLease, today) : p;
     properties.push([
       p.id,
       p.name,
       p.address,
       currentTenant,
-      moneyInput(p.rentCents),
-      moneyInput(p.chargesCents),
+      moneyInput(currentRent.rentCents),
+      moneyInput(currentRent.chargesCents),
       p.archived ? "Oui" : "Non",
     ]);
   }

@@ -357,6 +357,15 @@ export function validateLease(input, state) {
     paymentDay: Number(input.paymentDay ?? 1), notes: clean(input.notes),
   };
   const errors = {};
+  if (input.rentChanges !== undefined) {
+    const changes = input.rentChanges;
+    if (!Array.isArray(changes) || changes.length > 500 || changes.some((change, i) =>
+      !change || !validDate(change.effectiveDate) || change.effectiveDate < value.startDate ||
+      !safeCents(change.rentCents) || change.rentCents <= 0 || !safeCents(change.chargesCents) || change.chargesCents < 0 ||
+      (i > 0 && changes[i - 1].effectiveDate >= change.effectiveDate)))
+      errors.rentChanges = "L’historique des loyers doit contenir des dates uniques et des montants valides.";
+    else value.rentChanges = changes.map(({effectiveDate,rentCents,chargesCents}) => ({effectiveDate,rentCents,chargesCents}));
+  }
   if (value.id.length > 150) errors.id = "Identifiant trop long.";
   if (!(state?.tenants || []).some(t => t.id === value.tenantId)) errors.tenantId = "Choisissez un locataire existant.";
   if (!state?.properties.some(p => p.id === value.propertyId)) errors.propertyId = "Choisissez un bien existant.";
@@ -376,6 +385,47 @@ export function validateLease(input, state) {
     if (previous.propertyId !== value.propertyId) errors.propertyId = "Conservez le bien de cette location. Pour un autre bien, créez une nouvelle location.";
   }
   return { value, errors };
+}
+export function leaseRentAt(lease, date = todayISO()) {
+  let rentCents = lease.rentCents, chargesCents = lease.chargesCents;
+  for (const change of lease.rentChanges || []) {
+    if (change.effectiveDate > date) break;
+    rentCents = change.rentCents; chargesCents = change.chargesCents;
+  }
+  return { rentCents, chargesCents, amountCents: rentCents + chargesCents };
+}
+export function applyLeaseRentChange(state, leaseId, { effectiveDate, rent, charges = "0" } = {}) {
+  const lease = state.leases?.find(l => l.id === leaseId);
+  if (!lease) throw new Error("Location introuvable.");
+  const rentCents = parseMoney(rent), chargesCents = parseMoney(charges);
+  if (!validDate(effectiveDate) || effectiveDate < lease.startDate || (lease.endDate && effectiveDate > lease.endDate))
+    throw new Error("Choisissez une date d’effet comprise dans la location.");
+  if (rentCents === null || rentCents <= 0 || chargesCents === null || chargesCents < 0)
+    throw new Error("Renseignez un loyer positif et des provisions positives ou nulles.");
+  if ((lease.rentChanges || []).some(c => c.effectiveDate === effectiveDate))
+    throw new Error("Un changement existe déjà à cette date. Choisissez une autre date pour préserver l’historique.");
+  const changes = [...(lease.rentChanges || []), {effectiveDate,rentCents,chargesCents}].sort((a,b) => a.effectiveDate.localeCompare(b.effectiveDate));
+  if (changes.length > 500) throw new Error("La limite de changements de loyer est atteinte.");
+  lease.rentChanges = changes;
+  for (const rule of state.recurrences || [])
+    if (rule.leaseId === leaseId && rule.category === "rent") Object.assign(rule, leaseRentAt(lease));
+  let updated = 0, skipped = 0;
+  for (const t of state.transactions) {
+    if (t.cancelledAt || t.leaseId !== leaseId || t.category !== "rent" || (t.occurrenceDate || t.dueDate || t.date) < effectiveDate) continue;
+    if (getPayments(t).length) { skipped++; continue; }
+    Object.assign(t, leaseRentAt(lease, t.occurrenceDate || t.dueDate || t.date));
+    updated++;
+  }
+  return { updated, skipped };
+}
+export function cancelTransaction(state, id, reason, date = todayISO()) {
+  const t = state.transactions.find(row => row.id === id);
+  if (!t || t.cancelledAt) throw new Error("Cette opération est absente ou déjà annulée.");
+  if (!validDate(date) || !clean(reason) || clean(reason).length > 1000)
+    throw new Error("Indiquez un motif d’annulation de 1 à 1 000 caractères et une date valide.");
+  t.cancelledAt = date;
+  t.cancellationReason = clean(reason);
+  return t;
 }
 export function validateBankCheck(input, state, { allowBeforeOpening = false } = {}) {
   const value = { id: clean(input.id) || uid(), date: clean(input.date),
@@ -438,6 +488,12 @@ export function validateTransaction(input, state) {
     notes: clean(input.notes),
   };
   const errors = {};
+  if (input.cancelledAt !== undefined || input.cancellationReason !== undefined) {
+    value.cancelledAt = clean(input.cancelledAt);
+    value.cancellationReason = clean(input.cancellationReason);
+    if (!validDate(value.cancelledAt) || !value.cancellationReason || value.cancellationReason.length > 1000)
+      errors.cancelledAt = "L’annulation doit comporter une date et un motif valides.";
+  }
   validateDirectoryLinks(input, value, errors, state);
   if (input.normalizedLabel !== undefined) {
     value.normalizedLabel = input.normalizedLabel === true;
@@ -616,12 +672,14 @@ export function filterTransactions(
   return state.transactions
     .filter(
       (t) =>
+        (status === "cancelled" ? !!t.cancelledAt : !t.cancelledAt) &&
         (year === "all" ||
           t.date.slice(0, 4) === String(year) ||
+          (t.cancelledAt && t.cancelledAt.slice(0,4) === String(year)) ||
           getPayments(t).some((p) => p.date.slice(0, 4) === String(year))) &&
         (propertyId === "all" || t.propertyId === propertyId) &&
         (status === "all" ||
-          (status === "paid"
+          (status === "overdue" ? remainingCents(t) > 0 && (t.dueDate || t.date) < todayISO() : status === "paid"
             ? remainingCents(t) === 0
             : status === "pending"
               ? remainingCents(t) > 0
@@ -646,7 +704,7 @@ export function getSummary(
   const asOf = today < end ? today : end;
   const period = filterTransactions(state, { year, propertyId });
   const scoped = state.transactions.filter(
-    (t) => propertyId === "all" || t.propertyId === propertyId,
+    (t) => !t.cancelledAt && (propertyId === "all" || t.propertyId === propertyId),
   );
   const rows = scoped.flatMap((t) =>
     getPayments(t)
@@ -662,8 +720,10 @@ export function getSummary(
   const rent = rows
     .filter((r) => r.t.category === "rent")
     .reduce((n, r) => n + r.p.rentCents, 0);
-  const pending = period.filter(
-    (t) => remainingCents(t) > 0 && t.date.slice(0, 4) === String(year),
+  const pending = scoped.filter(
+    (t) => remainingCents(t) > 0 && (Number(year) === Number(today.slice(0,4))
+      ? (t.dueDate || t.date) <= end
+      : t.date.slice(0,4) === String(year)),
   );
   const pendingIncome = pending
     .filter((t) => t.type === "income")
@@ -706,6 +766,7 @@ export function getSummary(
     rent,
     pendingIncome,
     pendingExpense,
+    pending,
     overdue,
     balance,
     balanceAvailable,
@@ -900,12 +961,15 @@ export function exportCSV(state, transactions, { year = "all" } = {}) {
       "Capital prévu du prêt EUR",
       "Intérêts prévus du prêt EUR",
       "Assurance prévue du prêt EUR",
+      "Date d’annulation",
+      "Motif d’annulation",
     ],
   ];
   for (const t of transactions) {
     const payments = getPayments(t);
     let entries;
-    if (year === "all") entries = payments.length ? payments : [null];
+    if (t.cancelledAt) entries = [null];
+    else if (year === "all") entries = payments.length ? payments : [null];
     else {
       entries = payments.filter((p) => p.date.slice(0, 4) === String(year));
       const due = t.occurrenceDate || t.dueDate || t.date;
@@ -927,6 +991,7 @@ export function exportCSV(state, transactions, { year = "all" } = {}) {
           partial: "Partiellement réglée",
           overdue: "En retard",
           pending: "En attente",
+          cancelled: "Annulée",
         }[transactionStatus(t)],
         t.type === "income" ? moneyInput(p?.amountCents ?? 0) : "",
         t.type === "expense" ? moneyInput(p?.amountCents ?? 0) : "",
@@ -944,6 +1009,8 @@ export function exportCSV(state, transactions, { year = "all" } = {}) {
         ...["capitalCents", "interestCents", "insuranceCents"].map((field) =>
           index === 0 && t.category === "loan_payment" ? moneyInput(t[field]) : "",
         ),
+        t.cancelledAt || "",
+        t.cancellationReason || "",
       ]);
   }
   return "\ufeff" + rows.map((row) => row.map(csvCell).join(";")).join("\r\n");
@@ -1046,6 +1113,7 @@ function validatePayments(payments, t) {
   return { value };
 }
 export function getPayments(t) {
+  if (t.cancelledAt) return [];
   if (Array.isArray(t.payments)) return t.payments;
   return t.status === "paid"
     ? [
@@ -1060,8 +1128,9 @@ export function getPayments(t) {
 }
 export const paidCents = (t) =>
   getPayments(t).reduce((n, p) => n + p.amountCents, 0);
-export const remainingCents = (t) => Math.max(0, t.amountCents - paidCents(t));
+export const remainingCents = (t) => t.cancelledAt ? 0 : Math.max(0, t.amountCents - paidCents(t));
 export function transactionStatus(t, today = todayISO()) {
+  if (t.cancelledAt) return "cancelled";
   const remaining = remainingCents(t);
   if (remaining === 0) return "paid";
   if (paidCents(t) > 0) return "partial";
@@ -1096,6 +1165,7 @@ export function recordPayment(
   const index = state.transactions.findIndex((t) => t.id === id);
   if (index < 0) throw new Error("Opération introuvable.");
   const t = state.transactions[index];
+  if (t.cancelledAt) throw new Error("Une opération annulée ne peut pas être réglée.");
   const cents = parseMoney(amount);
   const remaining = remainingCents(t);
   if (!validDate(date))
@@ -1174,6 +1244,13 @@ export function recordPaymentsBatch(state, ids, date) {
   }
   state.transactions = draft.transactions;
   return ids.length;
+}
+export function validateRentRecurrence(value, state) {
+  if (!value.active || value.category !== "rent" || !value.leaseId) return "";
+  const overlap = (state.recurrences || []).some(other =>
+    other.id !== value.id && other.active && other.category === "rent" && other.leaseId === value.leaseId &&
+    other.startDate <= (value.endDate || "9999-12-31") && value.startDate <= (other.endDate || "9999-12-31"));
+  return overlap ? "Cette location possède déjà un loyer périodique actif sur cette période. Modifiez la périodicité existante pour éviter un double loyer." : "";
 }
 export function validateRecurrence(input, state) {
   const value = {
@@ -1351,6 +1428,8 @@ export function generateRecurringTransactions(
       const id = `rec:${key}`;
       if (ids.has(id))
         throw new Error("Un identifiant d’échéance est déjà utilisé.");
+      const lease = state.leases?.find(l => l.id === rule.leaseId);
+      const scheduledRent = rule.category === "rent" && lease ? leaseRentAt(lease, date) : null;
       const t = {
         id,
         date,
@@ -1381,6 +1460,7 @@ export function generateRecurringTransactions(
         payments: [],
         rentCents: rule.rentCents || 0,
         chargesCents: rule.chargesCents || 0,
+        ...(scheduledRent || {}),
       };
       t.label = transactionLabel(t, state);
       additions.push(t);
@@ -1431,7 +1511,7 @@ export function getForecast(
   });
   const last = monthEnd(`${rows.at(-1).period}-01`);
   const scoped = state.transactions.filter(
-    (t) => propertyId === "all" || t.propertyId === propertyId,
+    (t) => !t.cancelledAt && (propertyId === "all" || t.propertyId === propertyId),
   );
   const actual = scoped.reduce(
     (n, t) =>
@@ -1483,8 +1563,10 @@ export function getForecast(
         ? shiftDay(rule.generatedThrough, 1)
         : today;
     for (const due of leaseRecurrenceDates(state, rule, from, last))
-      if (!existing.has(`${rule.id}:${due}`))
-        add(rule.type, rule.amountCents, due);
+      if (!existing.has(`${rule.id}:${due}`)) {
+        const lease = state.leases?.find(l => l.id === rule.leaseId);
+        add(rule.type, rule.category === "rent" && lease ? leaseRentAt(lease, due).amountCents : rule.amountCents, due);
+      }
   }
   let balance = openingBalance;
   for (const row of rows) {

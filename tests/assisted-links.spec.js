@@ -1,3 +1,4 @@
+import { revealNav } from "./navigation.js";
 import {test,expect} from '@playwright/test';
 const currentDate = () => new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Paris'}).format(new Date());
 async function setup(page) {
@@ -23,7 +24,7 @@ async function setup(page) {
   await page.reload();
 }
 async function saved(page) { await expect(page.getByText('Enregistré en ligne',{exact:true})).toBeVisible(); }
-async function nav(page,name) { await page.locator('aside nav').getByRole('button',{name:name==='Biens immobiliers'?/^Biens immobiliers/:name,exact:name!=='Biens immobiliers'}).click(); }
+async function nav(page,name) { const button=page.locator('aside nav').getByRole('button',{name:name==='Biens immobiliers'?/^Biens immobiliers/:name,exact:name!=='Biens immobiliers'});await revealNav(page,button);await button.click(); }
 async function state(page) { return page.evaluate(async()=> (await(await fetch('/api/session')).json()).state); }
 
 test('les recherches assistées enregistrent les liens réels des biens, fournisseurs et opérations',async({page})=>{

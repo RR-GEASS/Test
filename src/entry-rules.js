@@ -1,3 +1,4 @@
+import { validateRentRecurrence } from "./model.js";
 const tenantCategories = new Set(['rent','recoverable','deposit_received','deposit_returned']);
 export function partyKind(category, type) {
   if (tenantCategories.has(category)) return 'tenant';
@@ -62,6 +63,7 @@ export function validateChangedEntries(state, previous) {
       const before = old.get(row.id);
       if (before && identityFields.every(key => (before[key] ?? "") === (row[key] ?? ""))) continue;
       const errors = entryRequirements(row);
+      if(collection === "recurrences") { const overlap=validateRentRecurrence(row,state);if(overlap) errors.leaseId=overlap; }
       if (Object.keys(errors).length) throw new Error(Object.values(errors).join(" "));
     }
   }

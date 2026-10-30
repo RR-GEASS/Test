@@ -3156,3 +3156,12 @@ dialog h2 {
 .form-field:has(> select[name="supplierId"]) {
   grid-column: 1 / -1;
 }
+
+.nav-group { margin:10px 0; border-top:1px solid var(--line); padding-top:9px; }
+.nav-group > summary { cursor:pointer; color:var(--muted); padding:10px 13px; font-size:11px; font-weight:600; }
+.nav-group .nav-item { min-height:37px; padding-top:8px; padding-bottom:8px; }
+.start-guide { padding:20px; margin-bottom:20px; }
+.start-guide p { color:var(--muted); line-height:1.7; }
+.start-guide > div { display:flex; flex-wrap:wrap; gap:10px; margin:16px 0; }
+.form-help { margin-left:auto; margin-right:12px; font-size:12px; }
+.status-pill.cancelled { background:var(--column); color:var(--muted); }

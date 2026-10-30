@@ -1,3 +1,4 @@
+import { openView } from "./navigation.js";
 import {test,expect} from '@playwright/test';
 const d=page=>page.locator('dialog[open]').last();
 async function setup(page) {
@@ -36,7 +37,7 @@ test('une dépense exige son fournisseur et ne présente qu’un seul champ pour
   expect(state.transactions[0]).toMatchObject({supplierId:'s',amountCents:10000});
 });
 test('le loyer périodique exige une location et masque les saisies déjà déduites de ce choix',async({page})=>{
-  await setup(page);await page.locator('aside nav [data-view=recurrences]').click();
+  await setup(page);await openView(page,'recurrences');
   await page.getByRole('button',{name:'Nouvelle périodicité',exact:true}).click();
   await expect(d(page).locator('[name=supplierId]')).not.toBeVisible();
   await expect(d(page).locator('[name=tenantId]')).not.toBeVisible();
@@ -58,7 +59,7 @@ test('le loyer périodique exige une location et masque les saisies déjà dédu
   expect(state.recurrences[0]).toMatchObject({leaseId:'l',tenantId:'t',propertyId:'p'});
 });
 test('les fiches biens et fournisseurs signalent les informations invalides avant de sauvegarder',async({page})=>{
-  await setup(page);await page.locator('aside nav [data-view=properties]').click();
+  await setup(page);await openView(page,'properties');
   await page.locator('.page-heading [data-action=add-property]').click();
   await d(page).locator('[name=name]').fill('Bien incomplet');
   await d(page).getByRole('button',{name:'Ajouter le bien',exact:true}).click();
@@ -66,7 +67,7 @@ test('les fiches biens et fournisseurs signalent les informations invalides avan
   await d(page).locator('[name=address]').fill('2 rue des Tests');
   await d(page).getByRole('button',{name:'Ajouter le bien',exact:true}).click();
   await expect(page.locator('dialog[open]')).toHaveCount(0);
-  await page.locator('aside nav [data-view=suppliers]').click();
+  await openView(page,'suppliers');
   await page.locator('.page-heading [data-action=add-supplier]').click();
   await d(page).locator('[name=name]').fill('Fournisseur incomplet');
   await d(page).locator('[name=siret]').fill('123');
@@ -78,7 +79,7 @@ test('les fiches biens et fournisseurs signalent les informations invalides avan
 
 
 test('choisir une banque ou une location ne transforme pas un emprunt reçu ou une restitution en dépense ou loyer',async({page})=>{
-  await setup(page);await page.locator('aside nav [data-view=recurrences]').click();
+  await setup(page);await openView(page,'recurrences');
   await page.getByRole('button',{name:'Nouvelle périodicité',exact:true}).click();
   await d(page).locator('[name=category]').selectOption('loan_received');
   await d(page).locator('[name=supplierId]').selectOption('s');

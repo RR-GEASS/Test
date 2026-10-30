@@ -1,9 +1,10 @@
 import {
   CATEGORIES, uid, fold, money, moneyInput, todayISO, shortDate,
   validateSupplier, validateTenant, validateLease, transactionLabel,
-  paidCents, remainingCents,
+  paidCents, remainingCents, leaseRentAt, applyLeaseRentChange,
 } from "./model.js";
 import { icon, esc } from "./ui.js";
+import { api } from "./api.js";
 import "./directory.css";
 
 const kindNames = { supplier: "fournisseur", tenant: "locataire" };
@@ -73,7 +74,7 @@ export function createDirectoryUI(ctx) {
     return `<article class="directory-card" data-testid="${kind}-card"><div class="directory-card-top"><span class="feature-icon blue">${icon(kind === "supplier" ? "receipt" : "building")}</span>${person.archived ? '<span class="status-pill pending">Désactivé</span>' : ""}</div><h3>${esc(person.name)}</h3><p>${esc(kind === "supplier" ? person.legalName || "Fournisseur" : activeLeases.map((l) => propertyName(l.propertyId)).join(" · ") || "Aucune location en cours")}</p><dl class="directory-mini">${detailItem("E-mail", person.email)}${detailItem("Téléphone", person.phone)}</dl><div class="directory-card-bottom"><span>${operations.length} opération${operations.length !== 1 ? "s" : ""}</span>${button(`view-${kind}`, person.id, "Ouvrir la fiche " + icon("arrow"))}</div></article>`;
   }
   function leaseCard(lease) {
-    return `<article class="directory-card" data-testid="lease-card"><div class="directory-card-top"><span class="feature-icon blue">${icon("building")}</span><span class="status-pill ${leaseStatus(lease) === "En cours" ? "paid" : "pending"}">${leaseStatus(lease)}</span></div><h3>${esc(propertyName(lease.propertyId))}</h3><p>${esc(tenantName(lease.tenantId))}</p><dl class="directory-mini">${detailItem("Occupation", `${shortDate(lease.startDate)} → ${lease.endDate ? shortDate(lease.endDate) : "Sans date de fin"}`)}${detailItem("Loyer et provisions", money(lease.rentCents + lease.chargesCents))}</dl><div class="directory-card-bottom"><span>Échéance le ${lease.paymentDay}</span>${button("view-lease", lease.id, "Ouvrir la location " + icon("arrow"))}</div></article>`;
+    return `<article class="directory-card" data-testid="lease-card"><div class="directory-card-top"><span class="feature-icon blue">${icon("building")}</span><span class="status-pill ${leaseStatus(lease) === "En cours" ? "paid" : "pending"}">${leaseStatus(lease)}</span></div><h3>${esc(propertyName(lease.propertyId))}</h3><p>${esc(tenantName(lease.tenantId))}</p><dl class="directory-mini">${detailItem("Occupation", `${shortDate(lease.startDate)} → ${lease.endDate ? shortDate(lease.endDate) : "Sans date de fin"}`)}${detailItem("Loyer et provisions", money(leaseRentAt(lease).amountCents))}</dl><div class="directory-card-bottom"><span>Échéance le ${lease.paymentDay}</span>${button("view-lease", lease.id, "Ouvrir la location " + icon("arrow"))}</div></article>`;
   }
   async function save(collection, value, message, callback) {
     const next = structuredClone(getState());
@@ -122,8 +123,19 @@ export function createDirectoryUI(ctx) {
       return;
     }
     const linked = Boolean(existing);
+    const rentLocked = existing && ((l.rentChanges || []).length || [...rows("transactions"), ...rows("recurrences")].some(row => row.leaseId === id && row.category === "rent"));
     const d = mountDialog(`<dialog class="form-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader(existing ? "Modifier la location" : "Nouvelle location", "Une occupation datée pour conserver l’historique du bien.", "building")}<div class="form-grid">${selectField("tenantId", "Locataire *", [{ id: "", label: "Choisir un locataire" }, ...people.map((t) => ({ id: t.id, label: t.name + (t.archived ? " (désactivé)" : "") }))], l.tenantId)}${selectField("propertyId", "Bien *", [{ id: "", label: "Choisir un bien" }, ...properties.map((p) => ({ id: p.id, label: p.name }))], l.propertyId)}${field("startDate", "Date d’entrée *", l.startDate, "date", "required")}${field("endDate", "Date de sortie", l.endDate, "date")}${field("rent", "Loyer hors charges (€) *", moneyInput(l.rentCents), "text", 'inputmode="decimal" required')}${field("charges", "Provisions sur charges (€)", moneyInput(l.chargesCents), "text", 'inputmode="decimal"')}${field("deposit", "Dépôt de garantie prévu (€)", moneyInput(l.depositCents), "text", 'inputmode="decimal"')}${field("paymentDay", "Jour d’échéance du loyer *", l.paymentDay, "number", 'min="1" max="31" required')}</div>${notesField(l.notes)}${linked ? '<p class="form-note">Cette location enregistrée conserve son bien et son locataire. Créez une nouvelle location pour un changement d’occupant.</p>' : ""}<p class="form-note">La date de sortie limite les nouvelles échéances des périodicités liées. Les opérations et règlements déjà enregistrés sont conservés ; vérifiez les éventuelles échéances préparées au-delà de la sortie.</p><p class="form-note">Le dépôt est une référence contractuelle. Son encaissement et sa restitution se saisissent comme opérations distinctes.</p>${formFooter(existing ? "Enregistrer" : "Créer la location")}</form></dialog>`);
     if (linked) for (const name of ["tenantId", "propertyId"]) d.querySelector(`[name=${name}]`).disabled = true;
+    if (rentLocked) {
+      const current = leaseRentAt(l);
+      for (const [name, cents] of [["rent",current.rentCents],["charges",current.chargesCents]]) {
+        d.querySelector(`[name=${name}]`).value = moneyInput(cents);
+        d.querySelector(`[name=${name}]`).readOnly = true;
+      }
+      const note = document.createElement("p"); note.className = "form-note";
+      note.textContent = "Pour changer le loyer sans modifier l’historique, utilisez « Modifier le loyer » dans le dossier de la location.";
+      d.querySelector("form").querySelector(".dialog-footer").before(note);
+    }
     d.querySelector("[name=propertyId]").addEventListener("change", (e) => {
       if (existing) return;
       const property = find("properties", e.target.value);
@@ -133,7 +145,9 @@ export function createDirectoryUI(ctx) {
     });
     d.querySelector("form").addEventListener("submit", async (e) => {
       e.preventDefault();
-      const result = validateLease({ ...l, ...Object.fromEntries(new FormData(e.currentTarget)) }, getState());
+      const input = { ...l, ...Object.fromEntries(new FormData(e.currentTarget)) };
+      if (rentLocked) { input.rent = moneyInput(l.rentCents); input.charges = moneyInput(l.chargesCents); }
+      const result = validateLease(input, getState());
       if (result.value.rentCents <= 0) result.errors.rent="Le loyer hors charges doit être supérieur à zéro.";
       if (showErrors(d, result.errors)) return;
       const next = structuredClone(getState());
@@ -156,6 +170,22 @@ export function createDirectoryUI(ctx) {
       closeDialog();
       await persist("La location et ses dates ont été enregistrées.");
       onSaved?.(result.value);
+    });
+  }
+  function rentChangeForm(id) {
+    if (!allowMutation()) return;
+    const lease = find("leases", id);
+    if (!lease) return;
+    const amounts = leaseRentAt(lease);
+    const d = mountDialog(`<dialog class="form-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader("Modifier le loyer", propertyName(lease.propertyId) + " · " + tenantName(lease.tenantId), "calendar")}${field("effectiveDate", "À partir du *", todayISO(), "date", "required")}${field("rent", "Nouveau loyer hors charges (€) *", moneyInput(amounts.rentCents), "text", 'inputmode="decimal" required')}${field("charges", "Nouvelles provisions sur charges (€)", moneyInput(amounts.chargesCents), "text", 'inputmode="decimal"')}<p class="form-note">Les prochaines échéances suivront ce montant à partir de la date choisie. Les échéances déjà préparées sans aucun règlement seront mises à jour ; les échéances réglées ou partiellement réglées resteront intactes. Vérifiez que la modification correspond à votre bail ou à un avenant.</p>${formFooter("Appliquer le changement")}</form></dialog>`);
+    d.querySelector("form").addEventListener("submit", async e => {
+      e.preventDefault();
+      const next = structuredClone(getState());
+      try {
+        const result = applyLeaseRentChange(next, id, Object.fromEntries(new FormData(e.currentTarget)));
+        setState(next); closeDialog();
+        await persist(`Le loyer a été modifié : ${result.updated} échéance(s) sans règlement mise(s) à jour, ${result.skipped} échéance(s) déjà pointée(s) conservée(s).`);
+      } catch(error) { showErrors(d, {effectiveDate:error.message}); }
     });
   }
   function operationHistory(kind, id) {
@@ -198,8 +228,19 @@ export function createDirectoryUI(ctx) {
   function leaseDetails(id) {
     const l = find("leases", id);
     if (!l) return;
-    const d = mountDialog(`<dialog class="form-dialog directory-dialog" aria-labelledby="dialog-title">${formHeader(propertyName(l.propertyId), tenantName(l.tenantId) + " · " + leaseStatus(l), "building")}<dl class="directory-details">${detailItem("Date d’entrée", shortDate(l.startDate))}${detailItem("Date de sortie", l.endDate ? shortDate(l.endDate) : "Non prévue")}${detailItem("Loyer hors charges", money(l.rentCents))}${detailItem("Provisions sur charges", money(l.chargesCents))}${detailItem("Dépôt de garantie prévu", money(l.depositCents))}${detailItem("Jour d’échéance", String(l.paymentDay))}${detailItem("Notes", l.notes)}</dl><div class="directory-detail-actions">${button("edit-lease", id, icon("edit") + " Modifier / terminer")}${button("documents-lease", id, icon("folder") + " Bail et documents")}${leaseStatus(l) !== "Terminée" ? button("lease-recurrence", id, icon("calendar") + " Préparer le loyer périodique") : ""}</div><h3 class="directory-history-title">Opérations de cette location</h3>${operationHistory("lease", id)}<div class="dialog-footer"><button type="button" class="button secondary" data-close>Fermer</button></div></dialog>`);
+    const d = mountDialog(`<dialog class="form-dialog directory-dialog" aria-labelledby="dialog-title">${formHeader(propertyName(l.propertyId), tenantName(l.tenantId) + " · " + leaseStatus(l), "building")}<dl class="directory-details">${detailItem("Date d’entrée", shortDate(l.startDate))}${detailItem("Date de sortie", l.endDate ? shortDate(l.endDate) : "Non prévue")}${detailItem("Loyer hors charges actuel", money(leaseRentAt(l).rentCents))}${detailItem("Provisions actuelles", money(leaseRentAt(l).chargesCents))}${detailItem("Dépôt de garantie prévu", money(l.depositCents))}${detailItem("Jour d’échéance", String(l.paymentDay))}${detailItem("Notes", l.notes)}</dl><div class="directory-detail-actions">${button("edit-lease", id, icon("edit") + " Modifier / terminer")}${button("lease-rent-change", id, icon("calendar") + " Modifier le loyer")}${button("documents-lease", id, icon("folder") + " Bail et documents")}${ctx.getUser()?.role === "owner" && !(l.rentChanges || []).length && ![...rows("transactions"),...rows("recurrences")].some(row=>row.leaseId===id) ? button("delete-empty-lease", id, icon("trash") + " Supprimer cette location vide", "danger-text") : ""}${leaseStatus(l) !== "Terminée" ? button("lease-recurrence", id, icon("calendar") + " Préparer le loyer périodique") : ""}</div>${(l.rentChanges || []).length ? `<h3 class="directory-history-title">Changements de loyer</h3><ul class="payment-list">${l.rentChanges.map(change=>`<li><span>À partir du ${shortDate(change.effectiveDate)}</span><strong>${money(change.rentCents)} HC + ${money(change.chargesCents)} de provisions</strong></li>`).join("")}</ul>` : ""}<h3 class="directory-history-title">Opérations de cette location</h3>${operationHistory("lease", id)}<div class="dialog-footer"><button type="button" class="button secondary" data-close>Fermer</button></div></dialog>`);
     bind(d);
+  }
+  function deleteEmptyLease(id) {
+    if (!allowMutation() || ctx.getUser()?.role !== "owner") return;
+    confirmDialog("Supprimer cette location vide ?", "Le serveur vérifiera qu’aucune opération, périodicité, changement de loyer ou pièce jointe n’est rattaché à cette location. Sinon, elle sera conservée.", "Supprimer la location vide", async () => {
+      try {
+        await api(`/leases/${encodeURIComponent(id)}`, undefined, "DELETE");
+        closeDialog();
+        await ctx.reloadSession();
+        ctx.toast("La location vide a été supprimée. Vous pouvez la recréer avec les bonnes informations.");
+      } catch (error) { ctx.toast(error.message, true); }
+    });
   }
   function archive(kind, id) {
     if (!allowMutation()) return;
@@ -227,6 +268,8 @@ export function createDirectoryUI(ctx) {
       "tenant-add-lease": () => { closeDialog(); leaseForm(undefined, id); },
       "view-supplier": () => personDetails("supplier", id), "view-tenant": () => personDetails("tenant", id),
       "view-lease": () => leaseDetails(id),
+      "lease-rent-change": () => { closeDialog(); rentChangeForm(id); },
+      "delete-empty-lease": () => deleteEmptyLease(id),
       "archive-supplier": () => archive("supplier", id), "archive-tenant": () => archive("tenant", id),
       "documents-supplier": () => ctx.openEntityDocuments("supplier", id),
       "documents-tenant": () => ctx.openEntityDocuments("tenant", id),

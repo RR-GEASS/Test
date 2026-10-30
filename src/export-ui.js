@@ -9,7 +9,7 @@ import {
   paidCents,
   transactionStatus,
 } from "./model.js";
-import { exportSelection, accountantCSVs, normalizeExportOptions } from "./accountant-export.js";
+import { exportSelection, accountantCSVs, normalizeExportOptions, annualAccountantOptions } from "./accountant-export.js";
 import { icon, esc } from "./ui.js";
 import { api } from "./api.js";
 export function createExportUI(ctx) {
@@ -25,6 +25,7 @@ export function createExportUI(ctx) {
     { id: "payments", label: "Règlements réels" },
     { id: "due", label: "Échéances des opérations" },
     { id: "period", label: "Période concernée (mois)" },
+    { id: "annual", label: "Dossier annuel : échéances, périodes et règlements" },
   ];
   const statusOptions = [
     { id: "paid", label: "Réglées" },
@@ -46,6 +47,7 @@ export function createExportUI(ctx) {
       includeDocuments: true,
       includeFullPaymentHistory: false,
       includeLeaseDocuments: false,
+      includeCancelled: false,
     };
     try {
       const stored = JSON.parse(localStorage.getItem(`cap-sci.export.${ownerKey}`) || "null");
@@ -98,14 +100,14 @@ export function createExportUI(ctx) {
       ownerKey = owner;
       reset();
     }
-    content.innerHTML = `<section class="export-intro"><span class="feature-icon blue">${icon("receipt")}</span><div><h2>Un dossier clair pour votre comptable</h2><p>Choisissez les dates, les opérations et les pièces à transmettre. Le dossier ZIP rassemble les tableaux détaillés et les justificatifs classés par bien, dans Encaissements et Décaissements.</p></div></section><div class="export-layout"><section class="panel export-settings" aria-labelledby="export-settings-title"><div class="panel-heading"><div><h2 id="export-settings-title">Préparer le dossier</h2><p>Les dates de début et de fin sont incluses.</p></div></div><form id="accountant-export-form" novalidate><div class="form-grid">${ctx.field("startDate", "Du", values.startDate, "date", "required")}${ctx.field("endDate", "Au", values.endDate, "date", "required")}</div><div class="export-quick-dates"><button type="button" data-export-range="current">Année en cours</button><button type="button" data-export-range="previous">Année précédente</button><button type="button" data-export-range="month">Mois en cours</button><button type="button" data-export-range="last-month">Mois précédent</button><button type="button" data-export-range="last-quarter">Trimestre précédent</button></div>${ctx.selectField("dateBasis", "Dates à utiliser", dateBasis, values.dateBasis)}<p class="form-note" id="export-date-help"></p>${ctx.field("query", "Rechercher dans les opérations", values.query, "search", 'placeholder="Libellé, tiers, référence…" maxlength="300"')}${checkGroup(
+    content.innerHTML = `<section class="export-intro"><span class="feature-icon blue">${icon("receipt")}</span><div><h2>Un dossier clair pour votre comptable</h2><p>Choisissez les dates, les opérations et les pièces à transmettre. Le dossier ZIP rassemble les tableaux détaillés et les justificatifs classés par bien, dans Encaissements et Décaissements.</p></div></section><div class="export-layout"><section class="panel export-settings" aria-labelledby="export-settings-title"><div class="panel-heading"><div><h2 id="export-settings-title">Préparer le dossier</h2><p>Les dates de début et de fin sont incluses.</p></div></div><form id="accountant-export-form" novalidate><div class="form-grid">${ctx.field("startDate", "Du", values.startDate, "date", "required")}${ctx.field("endDate", "Au", values.endDate, "date", "required")}</div><div class="export-quick-dates"><button type="button" data-export-range="current">Année en cours</button><button type="button" data-export-range="previous">Année précédente</button><button type="button" data-export-range="month">Mois en cours</button><button type="button" data-export-range="last-month">Mois précédent</button><button type="button" data-export-range="last-quarter">Trimestre précédent</button></div><button type="button" class="button secondary" id="export-annual-preset">${icon("receipt")}Dossier annuel comptable</button><p class="form-note">Prépare l’année indiquée dans « Du », avec les opérations réglées ou non et les règlements de cette année. Les filtres et exclusions manuelles sont remis à zéro.</p>${ctx.selectField("dateBasis", "Dates à utiliser", dateBasis, values.dateBasis)}<p class="form-note" id="export-date-help"></p>${ctx.field("query", "Rechercher dans les opérations", values.query, "search", 'placeholder="Libellé, tiers, référence…" maxlength="300"')}${checkGroup(
       "types",
       "Types",
       [
         { id: "income", label: "Encaissements" },
         { id: "expense", label: "Décaissements" },
       ],
-    )}${checkGroup("statuses", "Statuts", statusOptions)}<details class="export-extra"><summary>Filtrer par biens et catégories</summary>${checkGroup("propertyIds", "Biens", [{ id: "", label: "SCI / Général" }, ...ctx.getState().properties.map((p) => ({ id: p.id, label: p.name + (p.archived ? " (archivé)" : "") }))])}${checkGroup("categories", "Catégories", CATEGORIES)}</details><div class="export-document-options"><label class="check-label"><input type="checkbox" name="includeDocuments" ${values.includeDocuments ? "checked" : ""}>Inclure les justificatifs</label><p class="form-note">Les pièces des opérations retenues sont ajoutées au dossier ZIP, avec le libellé de leur opération et leur extension.</p><label class="check-label"><input type="checkbox" name="includeLeaseDocuments" ${values.includeLeaseDocuments ? "checked" : ""}>Inclure les baux et avenants liés</label><p class="form-note">Ajoute uniquement les baux et avenants des locations liées aux opérations retenues. Les documents personnels des locataires restent dans leur fiche.</p><label class="check-label"><input type="checkbox" name="includeFullPaymentHistory" ${values.includeFullPaymentHistory ? "checked" : ""}>Inclure tous les règlements liés</label><p class="form-note">En mode « Règlements réels », ajoute aussi les règlements liés hors dates. Ils sont identifiés « Hors période » et exclus des totaux de la plage choisie.</p></div><p class="finance-error" role="alert" id="export-error"></p></form></section><section class="export-result"><div class="export-metrics"><div class="stat-card"><span>Opérations retenues</span><strong data-testid="export-operation-count">0</strong></div><div class="stat-card"><span>Règlements exportés</span><strong data-testid="export-payment-count">0</strong></div></div><div class="panel export-package"><div class="panel-heading"><h2>Le contenu du dossier</h2><span class="year-chip">ZIP</span></div><ul><li>${icon("receipt")}<span><strong>Opérations et règlements</strong><small>Montants attendus, réglés et restants, ventilation, dates, biens, tiers, références et notes.</small></span></li><li>${icon("building")}<span><strong>Informations des biens</strong><small>Noms courts, adresses, locataires et loyers de référence.</small></span></li><li>${icon("folder")}<span><strong>Justificatifs classés par bien</strong><small>Pour chaque bien, les documents sont rangés directement dans Encaissements ou Décaissements. Les CSV indiquent leur chemin.</small></span></li></ul><div class="export-cash-summary" id="export-cash-summary"></div><div class="notice" id="export-preflight" aria-live="polite"></div><div class="export-downloads"><button class="button primary" id="download-accountant-zip">${icon("download")}Télécharger le dossier ZIP</button><button class="button secondary" id="download-accountant-csv">${icon("download")}Télécharger le CSV des opérations</button></div><p class="form-note export-auth-note">${ctx.getUser() ? "Le ZIP utilise les données enregistrées sur le serveur au moment du téléchargement." : "Connectez-vous pour télécharger un ZIP avec les justificatifs de votre compte. Le CSV permet de découvrir l’export en démonstration."}</p><p class="form-note export-auth-note">Ce dossier prépare les échanges avec votre comptable ; il ne constitue pas un FEC ni une déclaration fiscale.</p></div></section></div><section class="panel export-preview"><div class="panel-heading"><div><h2>Vérifier les opérations à transmettre</h2><p>Décochez les opérations à exclure. Modifier un filtre réinitialise cette sélection.</p></div><label class="check-label"><input type="checkbox" id="export-select-all" checked>Tout inclure</label></div><div id="export-preview-body"></div></section>`;
+    )}${checkGroup("statuses", "Statuts", statusOptions)}<details class="export-extra"><summary>Filtrer par biens et catégories</summary>${checkGroup("propertyIds", "Biens", [{ id: "", label: "SCI / Général" }, ...ctx.getState().properties.map((p) => ({ id: p.id, label: p.name + (p.archived ? " (archivé)" : "") }))])}${checkGroup("categories", "Catégories", CATEGORIES)}</details><div class="export-document-options"><label class="check-label"><input type="checkbox" name="includeDocuments" ${values.includeDocuments ? "checked" : ""}>Inclure les justificatifs</label><p class="form-note">Les pièces des opérations retenues sont ajoutées au dossier ZIP, avec le libellé de leur opération et leur extension.</p><label class="check-label"><input type="checkbox" name="includeLeaseDocuments" ${values.includeLeaseDocuments ? "checked" : ""}>Inclure les baux et avenants liés</label><p class="form-note">Ajoute uniquement les baux et avenants des locations liées aux opérations retenues. Les documents personnels des locataires restent dans leur fiche.</p><label class="check-label"><input type="checkbox" name="includeFullPaymentHistory" ${values.includeFullPaymentHistory ? "checked" : ""}>Inclure tous les règlements liés</label><p class="form-note">En mode « Règlements réels », ajoute aussi les règlements liés hors dates. Ils sont identifiés « Hors période » et exclus des totaux de la plage choisie.</p><details class="export-extra"><summary>Historique des annulations</summary><label class="check-label"><input type="checkbox" name="includeCancelled" ${values.includeCancelled ? "checked" : ""}>Inclure les opérations annulées</label><p class="form-note">Ajoute leur date et leur motif pour contrôle. Leurs anciens règlements restent hors des mouvements de trésorerie.</p></details></div><p class="finance-error" role="alert" id="export-error"></p></form></section><section class="export-result"><div class="export-metrics"><div class="stat-card"><span>Opérations retenues</span><strong data-testid="export-operation-count">0</strong></div><div class="stat-card"><span>Règlements exportés</span><strong data-testid="export-payment-count">0</strong></div></div><div class="panel export-package"><div class="panel-heading"><h2>Le contenu du dossier</h2><span class="year-chip">ZIP</span></div><ul><li>${icon("receipt")}<span><strong>Opérations et règlements</strong><small>Montants attendus, réglés et restants, ventilation, dates, biens, tiers, références et notes.</small></span></li><li>${icon("building")}<span><strong>Informations des biens</strong><small>Noms courts, adresses, locataires et loyers de référence.</small></span></li><li>${icon("folder")}<span><strong>Justificatifs classés par bien</strong><small>Pour chaque bien, les documents sont rangés directement dans Encaissements ou Décaissements. Les CSV indiquent leur chemin.</small></span></li></ul><div class="export-cash-summary" id="export-cash-summary"></div><div class="notice" id="export-preflight" aria-live="polite"></div><div class="export-downloads"><button class="button primary" id="download-accountant-zip">${icon("download")}Télécharger le dossier ZIP</button><button class="button secondary" id="download-accountant-csv">${icon("download")}Télécharger le CSV des opérations</button></div><p class="form-note export-auth-note">${ctx.getUser() ? "Le ZIP utilise les données enregistrées sur le serveur au moment du téléchargement." : "Connectez-vous pour télécharger un ZIP avec les justificatifs de votre compte. Le CSV permet de découvrir l’export en démonstration."}</p><p class="form-note export-auth-note">Ce dossier prépare les échanges avec votre comptable ; il ne constitue pas un FEC ni une déclaration fiscale.</p></div></section></div><section class="panel export-preview"><div class="panel-heading"><div><h2>Vérifier les opérations à transmettre</h2><p>Décochez les opérations à exclure. Modifier un filtre réinitialise cette sélection.</p></div><label class="check-label"><input type="checkbox" id="export-select-all" checked>Tout inclure</label></div><div id="export-preview-body"></div></section>`;
     const form = content.querySelector("form");
     function read(event) {
       const f = new FormData(form);
@@ -116,8 +118,9 @@ export function createExportUI(ctx) {
       values.includeDocuments = f.has("includeDocuments");
       values.includeFullPaymentHistory = f.has("includeFullPaymentHistory");
       values.includeLeaseDocuments = f.has("includeLeaseDocuments");
+      values.includeCancelled = f.has("includeCancelled");
       if (
-        !["includeDocuments", "includeFullPaymentHistory", "includeLeaseDocuments"].includes(
+        !["includeDocuments", "includeFullPaymentHistory", "includeLeaseDocuments", "includeCancelled"].includes(
           event?.target?.name,
         )
       )
@@ -129,6 +132,15 @@ export function createExportUI(ctx) {
     form.addEventListener("input", read);
     form.addEventListener("change", read);
     form.addEventListener("submit", (e) => e.preventDefault());
+    content.querySelector("#export-annual-preset").addEventListener("click", () => {
+      const year = Number(form.elements.startDate.value.slice(0, 4)) || Number(ctx.getYear());
+      values = annualAccountantOptions(year);
+      selectedIds = null;
+      downloadError = "";
+      remember();
+      render(content);
+      ctx.toast(`Dossier ${year} préparé : échéances, périodes et règlements, y compris les opérations non réglées.`);
+    });
     content.querySelectorAll("[data-export-range]").forEach((b) =>
       b.addEventListener("click", () => {
         const now = new Date();
@@ -188,6 +200,8 @@ export function createExportUI(ctx) {
       due: "Sélection selon la date d’échéance de chaque opération. Les règlements liés sont fournis, même hors plage, avec un indicateur de date.",
       period:
         "Sélection par mois concernés : tous les mois du mois de début au mois de fin sont inclus, indépendamment du jour choisi.",
+      annual:
+        "Inclut les opérations dont l’échéance, la période ou un règlement appartient aux dates choisies, même si elles ne sont pas réglées. Vérifiez aussi les factures non saisies et le rattachement à l’exercice avec votre comptable.",
     };
     content.querySelector("#export-date-help").textContent =
       help[values.dateBasis];
@@ -231,9 +245,10 @@ export function createExportUI(ctx) {
       !ctx.isSynced();
     content.querySelector("#download-accountant-csv").disabled =
       busy || !selection.transactions.length || !ctx.isSynced();
-    const missingReferences = selection.transactions.filter(t => !t.reference?.trim()).length;
-    const exempt = selection.transactions.filter(t => t.documentNotRequired).length;
-    const missingDocuments = attachmentCounts === null ? null : selection.transactions.filter(t => !t.documentNotRequired && !(attachmentCounts.get(t.id) || 0)).length;
+    const activeTransactions = selection.transactions.filter(t => !t.cancelledAt);
+    const missingReferences = activeTransactions.filter(t => !t.reference?.trim()).length;
+    const exempt = activeTransactions.filter(t => t.documentNotRequired).length;
+    const missingDocuments = attachmentCounts === null ? null : activeTransactions.filter(t => !t.documentNotRequired && !(attachmentCounts.get(t.id) || 0)).length;
     const documentsMessage = missingDocuments !== null
       ? `${missingDocuments} opération(s) sans justificatif · ${exempt} sans pièce requise`
       : !ctx.getUser() ? "Justificatifs non vérifiés en démonstration" : summaryError ? "Justificatifs non vérifiés : " + summaryError : "Vérification des justificatifs…";
@@ -252,7 +267,7 @@ export function createExportUI(ctx) {
           .slice(0, 100)
           .map(
             (t) =>
-              `<tr data-testid="export-operation-row"><td><input type="checkbox" data-export-operation="${esc(t.id)}" aria-label="Inclure ${esc(transactionLabel(t, ctx.getState()))}" ${selectedIds === null || selectedIds.has(t.id) ? "checked" : ""}></td><td><strong>${esc(transactionLabel(t, ctx.getState()))}</strong><small>${esc(categoryFor(t.category)?.label || "")} · ${esc({ paid: "Réglée", partial: "Partiellement réglée", pending: "Prévue", overdue: "En retard" }[transactionStatus(t)])}</small></td><td>${shortDate(t.dueDate || t.occurrenceDate || t.date)}</td><td>${money(t.amountCents)}</td><td>${money(paidCents(t))}</td><td>${money(remainingCents(t))}</td></tr>`,
+              `<tr data-testid="export-operation-row"><td><input type="checkbox" data-export-operation="${esc(t.id)}" aria-label="Inclure ${esc(transactionLabel(t, ctx.getState()))}" ${selectedIds === null || selectedIds.has(t.id) ? "checked" : ""}></td><td><strong>${esc(transactionLabel(t, ctx.getState()))}</strong><small>${esc(categoryFor(t.category)?.label || "")} · ${esc({ paid: "Réglée", partial: "Partiellement réglée", pending: "Prévue", overdue: "En retard", cancelled: "Annulée" }[transactionStatus(t)])}</small></td><td>${shortDate(t.dueDate || t.occurrenceDate || t.date)}</td><td>${money(t.amountCents)}</td><td>${money(paidCents(t))}</td><td>${money(remainingCents(t))}</td></tr>`,
           )
           .join(
             "",

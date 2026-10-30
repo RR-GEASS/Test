@@ -1,3 +1,4 @@
+import { revealNav } from "./navigation.js";
 import { completeEntry } from "./entry-helpers.js";
 import { test, expect } from "@playwright/test";
 
@@ -7,7 +8,7 @@ async function saved(page) {
   await expect(page.getByText("Enregistré en ligne", { exact: true })).toBeVisible();
 }
 async function navigate(page, name) {
-  await page.locator("aside nav").getByRole("button", { name, exact: true }).click();
+  const button=page.locator("aside nav").getByRole("button",{name,exact:true});await revealNav(page,button);await button.click();
 }
 async function session(page) {
   return page.evaluate(async () => {

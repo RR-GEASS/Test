@@ -14,6 +14,7 @@ import {
   remainingCents,
   transactionStatus,
   validateRecurrence,
+  validateRentRecurrence,
   validateTransaction,
   generateRecurringTransactions,
   monthEnd,
@@ -23,6 +24,7 @@ import {
   recordPaymentsBatch,
   suggestedAllocation,
   getForecast,
+  leaseRentAt,
 } from "./model.js";
 import { icon, esc } from "./ui.js";
 import { createBankCheckUI } from "./bank-check-ui.js";
@@ -36,6 +38,7 @@ const statusNames = {
   partial: "Partiellement réglé",
   overdue: "En retard",
   pending: "Prévu",
+  cancelled: "Annulée",
 };
 export function createFinanceUI(ctx) {
   const {
@@ -81,7 +84,7 @@ export function createFinanceUI(ctx) {
     el.textContent = error.message;
   };
   const badge = (t) =>
-    `<span class="status-pill ${transactionStatus(t)}">${statusNames[transactionStatus(t)]}</span>`;
+    `<span class="status-pill ${transactionStatus(t)}">${statusNames[transactionStatus(t)]}${transactionStatus(t) === "partial" && (t.dueDate || t.date) < todayISO() ? " · En retard" : ""}</span>`;
   const loanSummary = (t) =>
     `Capital : ${money(t.capitalCents || 0)} · Intérêts : ${money(t.interestCents || 0)} · Assurance : ${money(t.insuranceCents || 0)}`;
   function loanFields(values = {}) {
@@ -103,9 +106,13 @@ export function createFinanceUI(ctx) {
     const end = lease?.endDate && (!rule.endDate || lease.endDate < rule.endDate) ? lease.endDate : rule.endDate;
     return nextRecurrenceDate({...rule, endDate:end || ""}, lease?.startDate && lease.startDate > from ? lease.startDate : from);
   }
+  const displayedRule = rule => {
+    const lease = (getState().leases || []).find(l => l.id === rule.leaseId);
+    return rule.category === "rent" && lease ? {...rule, ...leaseRentAt(lease)} : rule;
+  };
   function renderRecurrences(content) {
     const rules = getState().recurrences || [];
-    content.innerHTML = `<div class="notice">${icon("calendar")}<span>Les échéances sont créées automatiquement jusqu’à la fin du mois courant, puis préparées à l’ouverture du mois suivant. Elles restent à pointer avant d’affecter la trésorerie. Une modification de périodicité s’applique aux échéances qui n’ont pas encore été créées.</span></div><div class="recurrence-grid">${rules.map((r) => `<article class="panel recurrence-card" data-testid="recurrence-card"><div class="recurrence-top"><span class="feature-icon ${r.type === "income" ? "green" : "amber"}">${icon(r.type)}</span><span class="status-pill ${r.active ? "paid" : "pending"}">${r.active ? "Active" : "En pause"}</span></div><h2>${esc(transactionLabel({ ...r, normalizedLabel: true, period: r.startDate.slice(0, 7) }, getState()))}</h2><strong class="recurrence-amount">${money(r.amountCents)} <small>/ ${frequencies.find((f) => f.id === r.frequency)?.label.toLowerCase()}</small></strong>${r.category === "rent" ? `<p>Loyer HC : ${money(r.rentCents)} · Provisions : ${money(r.chargesCents)}</p>` : r.category === "loan_payment" ? `<p>${loanSummary(r)}</p>` : ""}<dl><div><dt>Début</dt><dd>${shortDate(r.startDate)}</dd></div><div><dt>Fin</dt><dd>${r.endDate ? shortDate(r.endDate) : "Sans fin"}</dd></div><div><dt>Prochaine échéance à préparer</dt><dd>${r.active ? (nextDisplayedRecurrence(r) ? shortDate(nextDisplayedRecurrence(r)) : "Terminée") : "En pause"}</dd></div></dl><div class="property-actions"><button class="text-link" data-action="edit-recurrence" data-id="${esc(r.id)}">${icon("edit")}Modifier</button><button class="text-link" data-action="pause-recurrence" data-id="${esc(r.id)}">${r.active ? "Pause" : "Reprendre"}</button><button class="text-link danger-text" data-action="delete-recurrence" data-id="${esc(r.id)}">Supprimer</button></div></article>`).join("") || '<div class="empty-state"><h2>Votre premier rendez-vous régulier</h2><p>Ajoutez un loyer, une assurance ou une échéance de prêt.</p></div>'}</div>`;
+    content.innerHTML = `<div class="notice">${icon("calendar")}<span>Les échéances sont créées automatiquement jusqu’à la fin du mois courant, puis préparées à l’ouverture du mois suivant. Elles restent à pointer avant d’affecter la trésorerie. Une modification de périodicité s’applique aux échéances qui n’ont pas encore été créées.</span></div><div class="recurrence-grid">${rules.map(displayedRule).map((r) => `<article class="panel recurrence-card" data-testid="recurrence-card"><div class="recurrence-top"><span class="feature-icon ${r.type === "income" ? "green" : "amber"}">${icon(r.type)}</span><span class="status-pill ${r.active ? "paid" : "pending"}">${r.active ? "Active" : "En pause"}</span></div><h2>${esc(transactionLabel({ ...r, normalizedLabel: true, period: r.startDate.slice(0, 7) }, getState()))}</h2><strong class="recurrence-amount">${money(r.amountCents)} <small>/ ${frequencies.find((f) => f.id === r.frequency)?.label.toLowerCase()}</small></strong>${r.category === "rent" ? `<p>Loyer HC : ${money(r.rentCents)} · Provisions : ${money(r.chargesCents)}</p>` : r.category === "loan_payment" ? `<p>${loanSummary(r)}</p>` : ""}<dl><div><dt>Début</dt><dd>${shortDate(r.startDate)}</dd></div><div><dt>Fin</dt><dd>${r.endDate ? shortDate(r.endDate) : "Sans fin"}</dd></div><div><dt>Prochaine échéance à préparer</dt><dd>${r.active ? (nextDisplayedRecurrence(r) ? shortDate(nextDisplayedRecurrence(r)) : "Terminée") : "En pause"}</dd></div></dl><div class="property-actions"><button class="text-link" data-action="edit-recurrence" data-id="${esc(r.id)}">${icon("edit")}Modifier</button><button class="text-link" data-action="pause-recurrence" data-id="${esc(r.id)}">${r.active ? "Pause" : "Reprendre"}</button><button class="text-link danger-text" data-action="delete-recurrence" data-id="${esc(r.id)}">Supprimer</button></div></article>`).join("") || '<div class="empty-state"><h2>Votre premier rendez-vous régulier</h2><p>Ajoutez un loyer, une assurance ou une échéance de prêt.</p></div>'}</div>`;
   }
   function nextDay(date) {
     const d = new Date(`${date}T12:00:00`);
@@ -146,7 +153,7 @@ export function createFinanceUI(ctx) {
         "Catégorie",
         CATEGORIES.filter((c) => c.type === r.type),
         r.category,
-      )}${selectField("propertyId", "Bien", propertyOptions(), r.propertyId)}${selectField("frequency", "Fréquence", frequencies, r.frequency)}</div><div class="form-grid">${selectField("supplierId", "Fournisseur enregistré", [{id:"",label:"Aucun fournisseur"}, ...(getState().suppliers || []).filter(s => !s.archived || s.id === r.supplierId).map(s => ({id:s.id,label:s.name}))], r.supplierId || "")}${selectField("leaseId", "Location associée", [{id:"",label:"Aucune location"}, ...(getState().leases || []).map(l => ({id:l.id,label: `${prop(l.propertyId)?.name || "Bien"} · ${(getState().tenants || []).find(t => t.id === l.tenantId)?.name || "Locataire"}`}))], r.leaseId || "")}</div>${selectField("tenantId", "Locataire enregistré", [{id:"",label:"Aucun locataire"}, ...(getState().tenants || []).filter(t => !t.archived || t.id === r.tenantId).map(t => ({id:t.id,label:t.name}))],r.tenantId || "")}<p class="form-note">La location propose les montants du bail et son locataire. Le fournisseur propose sa catégorie habituelle.</p><div id="recurring-amounts"></div><div class="form-grid">${field("startDate", "Date de début *", r.startDate, "date", "required")}${field("endDate", "Date de fin", r.endDate, "date")}${field("paymentDay", "Jour d’échéance (1 à 31)", r.paymentDay || Number(r.startDate.slice(8,10)), "number", 'min="1" max="31" step="1" required')}</div>${field("detail", "Détail", r.detail || "", "text", 'maxlength="160" placeholder="Ex. : Assurance propriétaire"')}${field("counterparty", "Fournisseur / bénéficiaire / locataire", r.counterparty || "", "text", 'maxlength="160"')}${field("reference", "Référence de facture", r.reference || "", "text", 'maxlength="100"')}<div class="form-field"><label for="field-notes">Note pour le comptable</label><textarea id="field-notes" name="notes" maxlength="3000" rows="3">${esc(r.notes || "")}</textarea><span class="field-error" data-error="notes"></span></div><label class="check-label"><input type="checkbox" name="documentNotRequired" ${r.documentNotRequired ? "checked" : ""}>Justificatif non nécessaire pour ces échéances</label><p class="auto-label-preview" id="recurrence-preview"></p><p class="form-note">Le jour d’échéance choisi est conservé à chaque période. Si ce jour n’existe pas, l’échéance tombe le dernier jour du mois. Pour un prêt, choisissez « Échéance de prêt » et renseignez la répartition capital, intérêts et assurance. Vous pourrez l’ajuster chaque mois dans « Pointage mensuel », d’après le tableau d’amortissement bancaire.</p><p class="form-note">Les échéances jusqu’à la fin du mois courant seront ajoutées en attente. Les échéances déjà créées ne seront pas modifiées.</p>${formFooter(existing ? "Enregistrer" : "Créer la périodicité")}</form></dialog>`,
+      )}${selectField("propertyId", "Bien", propertyOptions(), r.propertyId)}${selectField("frequency", "Fréquence", frequencies, r.frequency)}</div><div class="form-grid">${selectField("supplierId", "Fournisseur enregistré", [{id:"",label:"Aucun fournisseur"}, ...(getState().suppliers || []).filter(s => !s.archived || s.id === r.supplierId).map(s => ({id:s.id,label:s.name}))], r.supplierId || "")}${selectField("leaseId", "Location associée", [{id:"",label:"Aucune location"}, ...(getState().leases || []).map(l => ({id:l.id,label: `${prop(l.propertyId)?.name || "Bien"} · ${(getState().tenants || []).find(t => t.id === l.tenantId)?.name || "Locataire"}`}))], r.leaseId || "")}</div>${selectField("tenantId", "Locataire enregistré", [{id:"",label:"Aucun locataire"}, ...(getState().tenants || []).filter(t => !t.archived || t.id === r.tenantId).map(t => ({id:t.id,label:t.name}))],r.tenantId || "")}<p class="form-note">La location propose les montants du bail et son locataire. Le fournisseur propose sa catégorie habituelle.</p><div id="recurring-amounts"></div><div class="form-grid">${field("startDate", "Date de début *", r.startDate, "date", "required")}${field("endDate", "Date de fin", r.endDate, "date")}${field("paymentDay", "Jour d’échéance (1 à 31)", r.paymentDay || Number(r.startDate.slice(8,10)), "number", 'min="1" max="31" step="1" required')}</div>${field("detail", "Détail", r.detail || "", "text", 'maxlength="160" placeholder="Ex. : Assurance propriétaire"')}${field("counterparty", "Fournisseur / bénéficiaire / locataire", r.counterparty || "", "text", 'maxlength="160"')}<p class="form-note">La référence du contrat se conserve sur la fiche fournisseur. Le numéro de facture se renseigne sur chaque opération, après sa création.</p><div class="form-field"><label for="field-notes">Note pour le comptable</label><textarea id="field-notes" name="notes" maxlength="3000" rows="3">${esc(r.notes || "")}</textarea><span class="field-error" data-error="notes"></span></div><label class="check-label"><input type="checkbox" name="documentNotRequired" ${r.documentNotRequired ? "checked" : ""}>Justificatif non nécessaire pour ces échéances</label><p class="auto-label-preview" id="recurrence-preview"></p><p class="form-note">Le jour d’échéance choisi est conservé à chaque période. Si ce jour n’existe pas, l’échéance tombe le dernier jour du mois. Pour un prêt, choisissez « Échéance de prêt » et renseignez la répartition capital, intérêts et assurance. Vous pourrez l’ajuster chaque mois dans « Pointage mensuel », d’après le tableau d’amortissement bancaire.</p><p class="form-note">Les échéances jusqu’à la fin du mois courant seront ajoutées en attente. Les échéances déjà créées ne seront pas modifiées.</p>${formFooter(existing ? "Enregistrer" : "Créer la périodicité")}</form></dialog>`,
     );
     let customPaymentDay = !!r.paymentDay;
     d.querySelector("[name=paymentDay]").addEventListener("input", () => { customPaymentDay = true; });
@@ -228,10 +235,24 @@ export function createFinanceUI(ctx) {
             "text",
             'inputmode="decimal" required',
           );
+      const linkedLease = (getState().leases || []).find(l => l.id === d.querySelector("[name=leaseId]").value);
+      if (linkedLease && category === "rent") {
+        const scheduled = leaseRentAt(linkedLease, d.querySelector("[name=startDate]").value || todayISO());
+        for (const [name, cents] of [["rent", scheduled.rentCents], ["charges", scheduled.chargesCents]]) {
+          const input = d.querySelector(`[name=${name}]`);
+          if (input) { input.value = moneyInput(cents); input.readOnly = true; }
+        }
+      }
       preview();
     }
     function preview() {
       updateLoanTotal(d);
+      const lease = (getState().leases || []).find(l => l.id === d.querySelector("[name=leaseId]").value);
+      if (lease && d.querySelector("[name=category]").value === "rent" && d.querySelector("[name=rent]")) {
+        const amounts = leaseRentAt(lease, d.querySelector("[name=startDate]").value || todayISO());
+        d.querySelector("[name=rent]").value = moneyInput(amounts.rentCents);
+        d.querySelector("[name=charges]").value = moneyInput(amounts.chargesCents);
+      }
       const values = Object.fromEntries(new FormData(d.querySelector("form")));
       d.querySelector("#recurrence-preview").textContent = transactionLabel(
         {
@@ -316,8 +337,8 @@ export function createFinanceUI(ctx) {
       d.querySelector("[name=endDate]").value = lease.endDate || "";
       amounts();
       if (d.querySelector("[name=rent]")) {
-        d.querySelector("[name=rent]").value = moneyInput(lease.rentCents);
-        d.querySelector("[name=charges]").value = moneyInput(lease.chargesCents);
+        d.querySelector("[name=rent]").value = moneyInput(leaseRentAt(lease, d.querySelector("[name=startDate]").value).rentCents);
+        d.querySelector("[name=charges]").value = moneyInput(leaseRentAt(lease, d.querySelector("[name=startDate]").value).chargesCents);
       } else if (d.querySelector("[name=amount]")) {
         d.querySelector("[name=amount]").value = moneyInput(category === "recoverable" ? lease.chargesCents : lease.depositCents);
       }
@@ -334,10 +355,13 @@ export function createFinanceUI(ctx) {
           active: r.active,
           generatedThrough: r.generatedThrough,
           documentNotRequired: e.currentTarget.elements.documentNotRequired.checked,
+          reference: "",
         },
         getState(),
       );
       Object.assign(result.errors, entryRequirements(result.value));
+      const duplicateRent = validateRentRecurrence(result.value, getState());
+      if (duplicateRent) result.errors.leaseId = duplicateRent;
       if (showErrors(d, result.errors)) return;
       const next = structuredClone(getState());
       next.recurrences ||= [];
@@ -366,18 +390,25 @@ export function createFinanceUI(ctx) {
   function createFromLease(leaseId) {
     const lease = (getState().leases || []).find(l => l.id === leaseId);
     if (!lease) return;
+    const existing = (getState().recurrences || []).filter(rule => rule.leaseId === leaseId && rule.category === "rent")
+      .sort((a,b) => Number(b.active) - Number(a.active) || b.startDate.localeCompare(a.startDate))[0];
+    if (existing) {
+      recurrenceForm(existing.id);
+      toast("Cette location possède déjà une périodicité. Modifiez-la ou reprenez-la plutôt que de créer un double loyer.");
+      return;
+    }
     if (lease.endDate && firstLeasePayment(lease) > lease.endDate) {
       toast("Cette location se termine avant sa première échéance. Saisissez le loyer au prorata dans les opérations.", true);
       return;
     }
     recurrenceForm(undefined, { leaseId, tenantId: lease.tenantId, propertyId: lease.propertyId,
       counterparty: (getState().tenants || []).find(t => t.id === lease.tenantId)?.name || "",
-      startDate: firstLeasePayment(lease), paymentDay: lease.paymentDay, endDate: lease.endDate || "", rentCents: lease.rentCents,
-      chargesCents: lease.chargesCents, amountCents: lease.rentCents + lease.chargesCents });
+      startDate: firstLeasePayment(lease), paymentDay: lease.paymentDay, endDate: lease.endDate || "", ...leaseRentAt(lease, firstLeasePayment(lease)) });
   }
   function pointingRows(arrears = false) {
     return getState()
-      .transactions.filter((t) =>
+      .transactions.filter((t) => !t.cancelledAt)
+      .filter((t) =>
         arrears
           ? t.type === "income" &&
             t.category === "rent" &&
@@ -485,7 +516,7 @@ export function createFinanceUI(ctx) {
   function loanForm(id) {
     if (!allowMutation()) return;
     const t = getState().transactions.find((row) => row.id === id);
-    if (!t || t.category !== "loan_payment") return;
+    if (!t || t.cancelledAt || t.category !== "loan_payment") return;
     const d = mountDialog(
       `<dialog class="form-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader("Ajuster le prêt", transactionLabel(t, getState()), "edit")}${loanFields({ capital: moneyInput(t.capitalCents || 0), interest: moneyInput(t.interestCents || 0), insurance: moneyInput(t.insuranceCents || 0) })}<p class="form-note">Reportez la répartition du tableau d’amortissement bancaire pour cette échéance. Seule cette opération sera modifiée ; la périodicité et les autres mois seront conservés.</p>${getPayments(t).length ? '<p class="form-note">Cette opération comporte déjà un règlement : vous pouvez corriger la répartition en conservant le même total.</p>' : ""}${formFooter("Enregistrer la répartition")}</form></dialog>`,
     );
@@ -507,7 +538,7 @@ export function createFinanceUI(ctx) {
   function paymentForm(id) {
     if (!allowMutation()) return;
     const t = getState().transactions.find((t) => t.id === id);
-    if (!t) return;
+    if (!t || t.cancelledAt) return;
     const rental = t.category === "rent";
     const d = mountDialog(
       `<dialog class="form-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader("Enregistrer le règlement", transactionLabel(t, getState()), "check")}<div class="payment-summary"><span>Attendu : ${money(t.amountCents)}</span><span>Déjà réglé : ${money(paidCents(t))}</span><strong>Reste : ${money(remainingCents(t))}</strong></div>${field("date", "Date du règlement *", todayISO(), "date", "required")}${field("amount", "Montant réglé (€) *", moneyInput(remainingCents(t)), "text", 'inputmode="decimal" required')}${rental ? `<div class="form-grid">${field("rentAmount", "Part loyer (€)", "", "text", 'inputmode="decimal"')}${field("chargesAmount", "Part provisions (€)", "", "text", 'inputmode="decimal"')}</div><p class="form-note">Ventilation proportionnelle proposée sur le reste dû, modifiable avant validation.</p>` : ""}${formFooter("Enregistrer le règlement")}</form></dialog>`,

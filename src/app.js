@@ -8,6 +8,8 @@ import "./style.css";
 import {
   CATEGORIES,
   categoryFor,
+  leaseRentAt,
+  cancelTransaction,
   uid,
   todayISO,
   money,
@@ -34,6 +36,9 @@ import {
   fold,
 } from "./model.js";
 import { icon, esc } from "./ui.js";
+import { createHelpUI } from "./help-ui.js";
+import { createAccountUI } from "./account-ui.js";
+import "./consolidation.css";
 import { configureEntryForm, entryRequirements } from "./entry-rules.js";
 import { assistEntityFields } from "./assisted-select.js";
 import { api } from "./api.js";
@@ -47,6 +52,10 @@ let exportUI;
 let financeUI;
 let directoryUI;
 let entityDocumentsUI;
+let helpUI;
+let accountUI;
+let invitationToken = new URLSearchParams(location.search).get("invite") || "";
+let invitationPresented = false;
 
 const app = document.querySelector("#app");
 const dialogRoot = document.querySelector("#dialog-root");
@@ -100,6 +109,9 @@ const navItems = [
   ["bank-checks", "check", "Contrôle bancaire"],
   ["exports", "download", "Export comptable"],
   ["backups", "folder", "Sauvegardes"],
+  ["access", "lock", "Accès et mot de passe"],
+  ["history", "clock", "Historique des corrections"],
+  ["storage", "folder", "Espace documentaire"],
 ];
 const titleFor = () =>
   navItems.find((v) => v[0] === view)?.[2] || "Vue d’ensemble";
@@ -126,8 +138,19 @@ function houseArt(color = "#648bb0") {
   return `<svg viewBox="0 0 250 150" fill="none" aria-hidden="true"><ellipse cx="125" cy="139" rx="103" ry="6" fill="${color}" opacity=".13"/><path d="M33 79 73 45l40 34v57H33Z" fill="#dce7f1"/><path d="m25 80 48-42 48 42" stroke="${color}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><rect x="58" y="99" width="25" height="37" rx="3" fill="#91acc6"/><path d="M103 41 147 17l44 24v95h-88Z" fill="#fbfdff" stroke="#c6d8e8"/><path d="M96 44 147 15l51 29" stroke="${color}" stroke-width="4" stroke-linecap="round"/><g fill="#cbdced"><rect x="120" y="51" width="16" height="21" rx="3"/><rect x="155" y="51" width="16" height="21" rx="3"/><rect x="120" y="85" width="16" height="21" rx="3"/><rect x="155" y="85" width="16" height="21" rx="3"/></g><rect x="139" y="114" width="17" height="22" rx="3" fill="${color}"/><path d="M210 135v-30m0 13c-20-2-23-17-18-25 15 1 20 14 18 25Zm0-8c19-1 25-15 20-25-16 0-22 13-20 25Z" fill="#a2b9a4"/><path d="m199 127 3 12h15l3-12" fill="#dbccb6"/><path d="m36 30 2-6 2 6 6 2-6 2-2 6-2-6-6-2 6-2Z" fill="#91acc6"/><circle cx="212" cy="50" r="5" fill="#e6c892"/></svg>`;
 }
 
+function navigationHTML() {
+  const item = ([id, ico, label]) => `<button class="nav-item ${view===id?"active":""}" data-view="${id}" ${view===id?'aria-current="page"':""}>${icon(ico)}<span>${label}</span>${id==="properties"?`<span class="nav-count">${state.properties.filter(p=>!p.archived).length}</span>`:""}</button>`;
+  const main = ["dashboard","pointing","transactions","properties","exports"];
+  const groups = [["Dossiers",["tenants","leases","suppliers","recurrences"]],["Outils et réglages",["arrears","bank-checks","forecast","backups","access","history","storage"]]];
+  return navItems.filter(n=>main.includes(n[0])).map(item).join("") + groups.map(([label, ids])=>`<details class="nav-group" ${ids.includes(view)?"open":""}><summary>${esc(label)}</summary>${navItems.filter(n=>ids.includes(n[0])).map(item).join("")}</details>`).join("");
+}
+function startGuide() {
+  if (!user || state.transactions.length) return "";
+  const steps = [["properties","Ajouter un bien",state.properties.length],["tenants","Créer le locataire",state.tenants.length],["leases","Associer sa location",state.leases.length],["recurrences","Préparer les loyers",state.recurrences.length]];
+  return `<section class="panel start-guide"><h2>Préparer votre premier mois</h2><p>Pour les loyers, suivez ces étapes. Pour une dépense, créez le fournisseur puis saisissez l’opération.</p><div>${steps.map(([target,label,done],i)=>`<button type="button" class="button secondary" data-view="${target}">${done?"✓":i+1} · ${label}</button>`).join("")}</div><button class="text-link" data-action="help">Comprendre le parcours et les bonnes pratiques</button></section>`;
+}
 function shell() {
-  app.innerHTML = `<div class="app-layout"><div class="sidebar-overlay" data-action="close-sidebar"></div><aside class="sidebar" aria-label="Navigation principale"><a class="brand" href="/" aria-label="Cap SCI, accueil"><span class="brand-symbol">${icon("building")}</span><span>cap<small>SCI</small></span></a><button class="workspace-label" data-action="settings" aria-label="Paramètres de la SCI"><span class="workspace-avatar">${icon("building")}</span><span class="workspace-name">${esc(state.settings.name)}<small>${esc(fiscalLabel())}</small></span>${icon("down")}</button><div class="nav-section-label">VOTRE ESPACE</div><nav>${navItems.map(([id, ico, label]) => `<button class="nav-item ${view === id ? "active" : ""}" data-view="${id}" ${view === id ? 'aria-current="page"' : ""}>${icon(ico)}<span>${label}</span>${id === "properties" ? `<span class="nav-count">${state.properties.filter((p) => !p.archived).length}</span>` : ""}</button>`).join("")}</nav><div class="sidebar-note"><span class="tiny-dot"></span>Suivi de trésorerie · ${esc(state.settings.taxRegime === "unknown" ? "régime à préciser" : state.settings.taxRegime)}</div><div class="sidebar-bottom"><div class="advisor-card">${icon("sparkle")}<strong>Les bons comptes,<br>l’esprit tranquille.</strong><p>Des opérations bien rangées pour travailler avec votre comptable.</p><button data-action="open-export">Dossier comptable ${icon("arrow")}</button></div><button class="theme-button" data-action="theme">${icon(theme === "dark" ? "sun" : "moon")} Mode ${theme === "dark" ? "clair" : "sombre"}</button><div class="account-footer">${icon(user ? "lock" : "circle")}<span>${user ? esc(user.email) : "Espace de démonstration"}</span>${user ? `<button class="icon-button" data-action="logout" aria-label="Se déconnecter">${icon("logout")}</button>` : ""}</div></div></aside><main class="main"><header class="topbar"><button class="mobile-menu icon-button" data-action="sidebar" aria-label="Ouvrir la navigation">${icon("menu")}</button><div class="breadcrumb">Mon patrimoine ${icon("chevron")}<span>${titleFor()}</span></div><div class="topbar-right"><span class="sync-indicator ${dirty ? "warning" : ""}">${icon(user ? "lock" : "circle")}<span>${saving ? "Enregistrement…" : dirty ? "Non enregistré" : user ? "Enregistré en ligne" : "Mode démonstration"}</span></span><button class="profile-button" data-action="${user ? "settings" : "auth"}" aria-label="${user ? "Paramètres de la SCI" : "Créer mon compte"}">${user ? esc(state.settings.name.charAt(0).toUpperCase()) : icon("plus")}</button></div></header><div class="workspace-content"><div id="notice-area"></div><div class="page-heading"><div><div class="eyebrow">VOTRE PATRIMOINE, EN TOUTE CLARTÉ</div><h1>${titleFor()}<span>.</span></h1><p>${{ recurrences: "Loyers, emprunts, assurances : vos rendez-vous réguliers.", pointing: "Un relevé, quelques cases cochées, des comptes à jour.", arrears: "Retrouvez les loyers et provisions qui restent à recevoir.", forecast: "Anticipez les 12 prochains mois, sans confondre prévu et réglé.", dashboard: "Les bons chiffres pour garder une longueur d’avance.", transactions: "Chaque mouvement, à sa place. Rien de plus, rien de moins.", properties: "Vos adresses, vos locataires, votre patrimoine.", exports: "Un dossier précis, complet et facile à transmettre.", backups: "Vos données vous appartiennent. Gardez-en une copie.", suppliers: "Vos interlocuteurs, leurs coordonnées et leur historique.", tenants: "Les coordonnées et documents de vos locataires.", leases: "Chaque occupation, ses dates et son dossier.", "bank-checks": "Comparez votre suivi avec le solde du relevé bancaire." }[view]}</p></div><button class="button primary" data-action="${({ properties: "add-property", recurrences: "add-recurrence", suppliers: "add-supplier", tenants: "add-tenant", leases: "add-lease", "bank-checks": "add-bank-check" })[view] || "add-transaction"}">${icon("plus")}${({ properties: "Ajouter un bien", recurrences: "Nouvelle périodicité", suppliers: "Ajouter un fournisseur", tenants: "Ajouter un locataire", leases: "Nouvelle location", "bank-checks": "Nouveau contrôle" })[view] || "Nouvelle opération"}</button></div><div id="page-content"></div><footer class="main-footer"><span>Cap SCI · Un patrimoine bien accompagné.</span><span>Suivi de trésorerie · ${esc(fiscalLabel())}</span></footer></div></main></div>`;
+  app.innerHTML = `<div class="app-layout"><div class="sidebar-overlay" data-action="close-sidebar"></div><aside class="sidebar" aria-label="Navigation principale"><a class="brand" href="/" aria-label="Cap SCI, accueil"><span class="brand-symbol">${icon("building")}</span><span>cap<small>SCI</small></span></a><button class="workspace-label" data-action="settings" aria-label="Paramètres de la SCI"><span class="workspace-avatar">${icon("building")}</span><span class="workspace-name">${esc(state.settings.name)}<small>${esc(fiscalLabel())}</small></span>${icon("down")}</button><div class="nav-section-label">VOTRE ESPACE</div><nav>${navigationHTML()}</nav><div class="sidebar-note"><span class="tiny-dot"></span>Suivi de trésorerie · ${esc(state.settings.taxRegime === "unknown" ? "régime à préciser" : state.settings.taxRegime)}</div><div class="sidebar-bottom"><div class="advisor-card">${icon("sparkle")}<strong>Les bons comptes,<br>l’esprit tranquille.</strong><p>Des opérations bien rangées pour travailler avec votre comptable.</p><button data-action="open-export">Dossier comptable ${icon("arrow")}</button></div><button class="theme-button" data-action="theme">${icon(theme === "dark" ? "sun" : "moon")} Mode ${theme === "dark" ? "clair" : "sombre"}</button><div class="account-footer">${icon(user ? "lock" : "circle")}<span>${user ? esc(user.email) : "Espace de démonstration"}</span>${user ? `<button class="icon-button" data-action="logout" aria-label="Se déconnecter">${icon("logout")}</button>` : ""}</div></div></aside><main class="main"><header class="topbar"><button class="mobile-menu icon-button" data-action="sidebar" aria-label="Ouvrir la navigation">${icon("menu")}</button><div class="breadcrumb">Mon patrimoine ${icon("chevron")}<span>${titleFor()}</span></div><div class="topbar-right"><button class="button secondary compact" data-action="help" aria-label="Aide de cette page">${icon("circle")}Aide</button><span class="sync-indicator ${dirty ? "warning" : ""}">${icon(user ? "lock" : "circle")}<span>${saving ? "Enregistrement…" : dirty ? "Non enregistré" : user ? "Enregistré en ligne" : "Mode démonstration"}</span></span><button class="profile-button" data-action="${user ? "settings" : "auth"}" aria-label="${user ? "Paramètres de la SCI" : "Créer mon compte"}">${user ? esc(state.settings.name.charAt(0).toUpperCase()) : icon("plus")}</button></div></header><div class="workspace-content"><div id="notice-area"></div><div class="page-heading"><div><div class="eyebrow">VOTRE PATRIMOINE, EN TOUTE CLARTÉ</div><h1>${titleFor()}<span>.</span></h1><p>${{ recurrences: "Loyers, emprunts, assurances : vos rendez-vous réguliers.", pointing: "Un relevé, quelques cases cochées, des comptes à jour.", arrears: "Retrouvez les loyers et provisions qui restent à recevoir.", forecast: "Anticipez les 12 prochains mois, sans confondre prévu et réglé.", dashboard: "Les bons chiffres pour garder une longueur d’avance.", transactions: "Chaque mouvement, à sa place. Rien de plus, rien de moins.", properties: "Vos adresses, vos locataires, votre patrimoine.", exports: "Un dossier précis, complet et facile à transmettre.", backups: "Vos données vous appartiennent. Gardez-en une copie.", suppliers: "Vos interlocuteurs, leurs coordonnées et leur historique.", tenants: "Les coordonnées et documents de vos locataires.", leases: "Chaque occupation, ses dates et son dossier.", "bank-checks": "Comparez votre suivi avec le solde du relevé bancaire.", access:"Un accès personnel pour chacun, une SCI partagée.", history:"Retrouvez les corrections et restaurations de votre espace.", storage:"Retrouvez vos fichiers et l’espace utilisé." }[view]}</p></div><button class="button primary" ${["access","history","storage"].includes(view)?"hidden":""} data-action="${({ properties: "add-property", recurrences: "add-recurrence", suppliers: "add-supplier", tenants: "add-tenant", leases: "add-lease", "bank-checks": "add-bank-check" })[view] || "add-transaction"}">${icon("plus")}${({ properties: "Ajouter un bien", recurrences: "Nouvelle périodicité", suppliers: "Ajouter un fournisseur", tenants: "Ajouter un locataire", leases: "Nouvelle location", "bank-checks": "Nouveau contrôle" })[view] || "Nouvelle opération"}</button></div><div id="page-content"></div><footer class="main-footer"><span>Cap SCI · Un patrimoine bien accompagné.</span><span>Suivi de trésorerie · ${esc(fiscalLabel())}</span></footer></div></main></div>`;
   renderNotices();
   renderPage();
 }
@@ -160,6 +183,7 @@ function renderPage() {
   if (view === "exports") exportUI.render(content);
   financeUI.render(view, content);
   directoryUI.render(view, content);
+  accountUI.render(view, content);
   if (["dashboard", "transactions", "pointing", "arrears"].includes(view)) void attachmentStatus.refresh();
   document.querySelector("#year-filter")?.addEventListener("change", (e) => {
     year = Number(e.target.value);
@@ -229,8 +253,8 @@ function renderDashboard(content) {
       "Opérations saisies en attente",
     ],
   ];
-  content.innerHTML = `${periodControls()}<section class="welcome-banner"><div><span class="welcome-kicker">${esc(state.settings.name)} · ${esc(fiscalLabel())}</span><h2>Chaque bien a son histoire.<br>Vos chiffres ont leur place.</h2><p>Loyers, dépenses et trésorerie : une vue claire pour avancer.</p></div><div class="hero-art">${houseArt()}</div><span class="banner-sticker">Moins de papiers,<br>plus de sérénité.</span></section><section class="stats" aria-label="Indicateurs de trésorerie">${stats.map(([label, value, ico, color, note], i) => `<div class="stat-card"><div class="stat-top"><span>${label}</span><span class="stat-icon ${color}">${icon(ico)}</span></div><strong class="stat-value" data-testid="metric-${i}">${value === null ? "Non disponible" : money(value)}</strong><span class="stat-caption">${note}</span></div>`).join("")}</section><div class="dashboard-grid"><section class="panel chart-panel"><div class="panel-heading"><div><h2>Vos mouvements au fil des mois</h2><p>Opérations réglées · ${year} · jusqu’au ${shortDate(s.asOf)}</p></div><span class="year-chip">${year}</span></div><div class="chart-legend"><span><i></i>Encaissements</span><span><i></i>Décaissements</span></div>${chart(s.monthly)}</section><section class="panel pending-panel"><div class="panel-heading"><div><h2>À suivre de près</h2><p>Échéances saisies pour ${year}</p></div><span class="pending-count">${s.overdue.length}</span></div><div class="pending-summary"><span>À décaisser</span><strong>${money(s.pendingExpense)}</strong></div><div class="pending-list">${
-    filterTransactions(state, { year, propertyId, status: "pending" })
+  content.innerHTML = `${startGuide()}${periodControls()}<section class="welcome-banner"><div><span class="welcome-kicker">${esc(state.settings.name)} · ${esc(fiscalLabel())}</span><h2>Chaque bien a son histoire.<br>Vos chiffres ont leur place.</h2><p>Loyers, dépenses et trésorerie : une vue claire pour avancer.</p></div><div class="hero-art">${houseArt()}</div><span class="banner-sticker">Moins de papiers,<br>plus de sérénité.</span></section><section class="stats" aria-label="Indicateurs de trésorerie">${stats.map(([label, value, ico, color, note], i) => `<div class="stat-card"><div class="stat-top"><span>${label}</span><span class="stat-icon ${color}">${icon(ico)}</span></div><strong class="stat-value" data-testid="metric-${i}">${value === null ? "Non disponible" : money(value)}</strong><span class="stat-caption">${note}</span></div>`).join("")}</section><div class="dashboard-grid"><section class="panel chart-panel"><div class="panel-heading"><div><h2>Vos mouvements au fil des mois</h2><p>Opérations réglées · ${year} · jusqu’au ${shortDate(s.asOf)}</p></div><span class="year-chip">${year}</span></div><div class="chart-legend"><span><i></i>Encaissements</span><span><i></i>Décaissements</span></div>${chart(s.monthly)}</section><section class="panel pending-panel"><div class="panel-heading"><div><h2>À suivre de près</h2><p>Échéances saisies pour ${year}</p></div><span class="pending-count">${s.overdue.length}</span></div><div class="pending-summary"><span>À décaisser</span><strong>${money(s.pendingExpense)}</strong></div><div class="pending-list">${
+    [...s.pending]
       .sort((a, b) => a.date.localeCompare(b.date))
       .slice(0, 3)
       .map(
@@ -256,7 +280,7 @@ function chart(monthly) {
 function ledgerHTML(rows) {
   if (!rows.length)
     return `<div class="empty-state">${icon("receipt")}<h3>Aucune opération pour le moment</h3><p>Ajoutez un premier mouvement ou ajustez vos filtres.</p><button class="button secondary" data-action="add-transaction">${icon("plus")}Ajouter une opération</button></div>`;
-  return `<div class="table-scroll" tabindex="0" role="region" aria-label="Tableau défilant des opérations"><table class="ledger"><thead><tr><th>Date</th><th>Opération</th><th>Bien</th><th>Montant</th><th>Statut</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${rows.map((t) => `<tr data-testid="operation-row" data-id="${esc(t.id)}"><td class="date-cell">${shortDate(t.date)}</td><td><div class="operation-cell"><span class="flow-icon ${t.type}">${icon(t.type)}</span><span><button class="operation-label" data-action="edit-transaction" data-id="${esc(t.id)}">${esc(transactionLabel(t, state))}</button><small>${esc(categoryFor(t.category).label)}${t.reference ? ` · ${esc(t.reference)}` : ""}</small>${attachmentStatus.html(t.id)}${t.supplierId ? `<button class="text-link" data-action="view-supplier" data-id="${esc(t.supplierId)}">${esc(state.suppliers.find(s=>s.id===t.supplierId)?.name || "Fournisseur")}</button>` : t.tenantId ? `<button class="text-link" data-action="view-tenant" data-id="${esc(t.tenantId)}">${esc(state.tenants.find(n=>n.id===t.tenantId)?.name || "Locataire")}</button>` : ""}</span></div></td><td><span class="property-cell">${esc(propertyFor(t.propertyId)?.name || "SCI / Général")}</span></td><td class="amount ${t.type}">${t.type === "income" ? "+" : "−"} ${money(t.amountCents)}${paidCents(t) > 0 && remainingCents(t) > 0 ? `<small>Réglé ${money(paidCents(t))} · Reste ${money(remainingCents(t))}</small>` : ""}</td><td><span class="status-pill ${transactionStatus(t)}"><i></i>${{ paid: "Réglée", partial: "Partiellement réglé", overdue: "En retard", pending: "Prévu" }[transactionStatus(t)]}</span></td><td><button class="icon-button" data-action="operation-menu" data-id="${esc(t.id)}" aria-label="Actions pour ${esc(transactionLabel(t, state))}" aria-haspopup="menu" aria-expanded="false">${icon("more")}</button></td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-scroll" tabindex="0" role="region" aria-label="Tableau défilant des opérations"><table class="ledger"><thead><tr><th>Date</th><th>Opération</th><th>Bien</th><th>Montant</th><th>Statut</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${rows.map((t) => `<tr data-testid="operation-row" data-id="${esc(t.id)}"><td class="date-cell">${shortDate(t.date)}</td><td><div class="operation-cell"><span class="flow-icon ${t.type}">${icon(t.type)}</span><span><button class="operation-label" data-action="edit-transaction" data-id="${esc(t.id)}">${esc(transactionLabel(t, state))}</button><small>${esc(categoryFor(t.category).label)}${t.reference ? ` · ${esc(t.reference)}` : ""}</small>${attachmentStatus.html(t.id)}${t.supplierId ? `<button class="text-link" data-action="view-supplier" data-id="${esc(t.supplierId)}">${esc(state.suppliers.find(s=>s.id===t.supplierId)?.name || "Fournisseur")}</button>` : t.tenantId ? `<button class="text-link" data-action="view-tenant" data-id="${esc(t.tenantId)}">${esc(state.tenants.find(n=>n.id===t.tenantId)?.name || "Locataire")}</button>` : ""}</span></div></td><td><span class="property-cell">${esc(propertyFor(t.propertyId)?.name || "SCI / Général")}</span></td><td class="amount ${t.type}">${t.type === "income" ? "+" : "−"} ${money(t.amountCents)}${paidCents(t) > 0 && remainingCents(t) > 0 ? `<small>Réglé ${money(paidCents(t))} · Reste ${money(remainingCents(t))}</small>` : ""}</td><td><span class="status-pill ${transactionStatus(t)}"><i></i>${{ paid: "Réglée", partial: "Partiellement réglé", overdue: "En retard", pending: "Prévu", cancelled: "Annulée" }[transactionStatus(t)]}</span></td><td><button class="icon-button" data-action="operation-menu" data-id="${esc(t.id)}" aria-label="Actions pour ${esc(transactionLabel(t, state))}" aria-haspopup="menu" aria-expanded="false">${icon("more")}</button></td></tr>`).join("")}</tbody></table></div>`;
 }
 function renderTransactions(content) {
   content.innerHTML = `${periodControls()}<section class="panel transactions-panel"><div class="panel-heading"><div><h2>Journal des mouvements</h2><p>Encaissements et décaissements, réglés ou prévus.</p></div><span class="year-chip">EUR</span></div><div class="ledger-toolbar"><div class="search-field">${icon("search")}<input id="search" type="search" placeholder="Rechercher une opération…" aria-label="Rechercher une opération" value="${esc(query)}"></div><select id="status-filter" aria-label="Filtrer par statut">${options(
@@ -264,6 +288,7 @@ function renderTransactions(content) {
       { id: "all", label: "Tous les statuts" },
       { id: "paid", label: "Réglées" },
       { id: "pending", label: "En attente" },
+      { id: "cancelled", label: "Annulées" },
     ],
     status,
   )}</select><select id="category-filter" aria-label="Filtrer par catégorie">${options([{ id: "all", label: "Toutes les catégories" }, ...CATEGORIES], category)}</select><select id="document-filter" aria-label="Filtrer les justificatifs">${options([{id:"all",label:"Tous les justificatifs"},{id:"missing",label:"Justificatifs manquants"},{id:"attached",label:"Avec justificatif"},{id:"not-required",label:"Justificatif non nécessaire"}],documentFilter)}</select><button class="text-link" data-action="reset-filters">Réinitialiser</button></div><div id="ledger-results"></div></section>`;
@@ -284,8 +309,9 @@ function renderLedger() {
 }
 function renderProperties(content) {
   const active = state.properties.filter((p) => !p.archived);
-  const rent = active.reduce((n, p) => n + p.rentCents, 0);
-  content.innerHTML = `<div class="property-summary"><span>${icon("building")}<b>${active.length}</b> bien${active.length !== 1 ? "s" : ""} actif${active.length !== 1 ? "s" : ""}</span><span>Loyers mensuels de référence <strong>${money(rent)}</strong><small>Hors charges · ne constitue pas un encaissement</small></span></div><div class="properties-grid">${state.properties.map((p, i) => `<article class="property-card ${p.archived ? "archived" : ""}" data-testid="property-card"><div class="property-illustration tone-${i % 3}">${houseArt(["#648bb0", "#8caa94", "#c0a176"][i % 3])}<span>${p.archived ? "Archivé" : "Bien locatif"}</span></div><div class="property-body"><h2>${esc(p.name)}</h2><p class="address">${esc(p.address || "Adresse à renseigner")}</p><div class="tenant">${icon("lock")}<span>Locataire<strong>${esc(occupantFor(p))}</strong></span></div><div class="rent-details"><div><span>Loyer mensuel HC</span><strong>${money(p.rentCents)}</strong></div><div><span>Provisions / mois</span><strong>${money(p.chargesCents)}</strong></div></div><div class="property-actions"><button class="text-link" data-action="view-property" data-id="${esc(p.id)}">${icon("folder")}Dossier du bien</button><button class="text-link" data-action="edit-property" data-id="${esc(p.id)}">${icon("edit")}Modifier</button><button class="text-link muted" data-action="archive-property" data-id="${esc(p.id)}">${p.archived ? "Réactiver" : "Archiver"}</button></div></div></article>`).join("")}<button class="new-property-card" data-action="add-property">${icon("plus")}<strong>Une nouvelle adresse ?</strong><span>Ajouter un bien à votre patrimoine</span></button></div><div class="accounting-note">${icon("folder")}<p>Archiver un bien conserve son historique. Les opérations restent visibles dans le journal et les exports. Utilisez le nom court pour retrouver chaque bien. Configurez les loyers dans « Opérations périodiques » pour préparer les échéances, puis pointez les règlements.</p></div>`;
+  const currentRent = p => activeLeaseFor(p.id) ? leaseRentAt(activeLeaseFor(p.id)) : p;
+  const rent = active.reduce((n, p) => n + currentRent(p).rentCents, 0);
+  content.innerHTML = `<div class="property-summary"><span>${icon("building")}<b>${active.length}</b> bien${active.length !== 1 ? "s" : ""} actif${active.length !== 1 ? "s" : ""}</span><span>Loyers mensuels de référence <strong>${money(rent)}</strong><small>Hors charges · ne constitue pas un encaissement</small></span></div><div class="properties-grid">${state.properties.map((p, i) => `<article class="property-card ${p.archived ? "archived" : ""}" data-testid="property-card"><div class="property-illustration tone-${i % 3}">${houseArt(["#648bb0", "#8caa94", "#c0a176"][i % 3])}<span>${p.archived ? "Archivé" : "Bien locatif"}</span></div><div class="property-body"><h2>${esc(p.name)}</h2><p class="address">${esc(p.address || "Adresse à renseigner")}</p><div class="tenant">${icon("lock")}<span>Locataire<strong>${esc(occupantFor(p))}</strong></span></div><div class="rent-details"><div><span>Loyer mensuel HC</span><strong>${money(currentRent(p).rentCents)}</strong></div><div><span>Provisions / mois</span><strong>${money(currentRent(p).chargesCents)}</strong></div></div><div class="property-actions"><button class="text-link" data-action="view-property" data-id="${esc(p.id)}">${icon("folder")}Dossier du bien</button><button class="text-link" data-action="edit-property" data-id="${esc(p.id)}">${icon("edit")}Modifier</button><button class="text-link muted" data-action="archive-property" data-id="${esc(p.id)}">${p.archived ? "Réactiver" : "Archiver"}</button></div></div></article>`).join("")}<button class="new-property-card" data-action="add-property">${icon("plus")}<strong>Une nouvelle adresse ?</strong><span>Ajouter un bien à votre patrimoine</span></button></div><div class="accounting-note">${icon("folder")}<p>Archiver un bien conserve son historique. Les opérations restent visibles dans le journal et les exports. Utilisez le nom court pour retrouver chaque bien. Configurez les loyers dans « Opérations périodiques » pour préparer les échéances, puis pointez les règlements.</p></div>`;
 }
 function renderBackups(content) {
   content.innerHTML = `<div class="backup-intro"><span class="backup-illustration">${icon("lock")}</span><h2>Votre SCI vous suit.<br>Vos données restent à vous.</h2><p>${user ? "Vos données sont enregistrées sur le serveur de votre compte. Une sauvegarde JSON permet aussi de conserver une copie indépendante." : "Explorez librement la démonstration. Créez un compte pour enregistrer votre SCI sur le serveur et la retrouver sur plusieurs appareils."}</p></div><div class="backup-grid"><section class="panel backup-card"><span class="feature-icon purple">${icon("download")}</span><h2>Une copie complète</h2><p>Biens, périodicités, opérations, règlements et paramètres réunis en JSON. Les fichiers justificatifs sont exclus : téléchargez-les séparément ou sauvegardez la base serveur.</p><button class="button primary" data-action="json">${icon("download")}Télécharger la sauvegarde</button></section><section class="panel backup-card"><span class="feature-icon green">${icon("upload")}</span><h2>Reprendre une sauvegarde</h2><p>Restaurez un fichier Cap SCI. Un aperçu et une confirmation précèdent le remplacement de vos données.</p><button class="button secondary" data-action="import">${icon("upload")}Importer une sauvegarde</button><input id="import-file" type="file" accept=".json,application/json" hidden></section><section class="panel backup-card"><span class="feature-icon amber">${icon("receipt")}</span><h2>Pour votre comptable</h2><p>Choisissez une plage de dates, les opérations et les justificatifs à transmettre. Le dossier ZIP contient des CSV détaillés et les pièces classées par bien. Ce dossier n’est pas un FEC.</p><button class="button secondary" data-action="open-export">${icon("download")}Préparer un dossier comptable</button></section><section class="panel backup-card"><span class="feature-icon blue">${icon(user ? "building" : "lock")}</span><h2>${user ? "Votre espace personnel" : "Votre SCI, sur tous vos écrans"}</h2><p>${user ? `Connecté en tant que ${esc(user.email)}. Pour accéder à vos données ailleurs, connectez-vous à la même adresse du site avec ce compte.` : "Créez votre espace avec un e-mail et un mot de passe. Le compte démarre sans données de démonstration."}</p><button class="button secondary" data-action="${user ? "settings" : "auth"}">${icon(user ? "settings" : "plus")}${user ? "Paramètres de ma SCI" : "Créer mon compte"}</button></section></div><div class="notice">${icon("folder")}<span>Le fichier JSON contient les informations de votre SCI et de vos locataires. Conservez-le dans un emplacement privé. La synchronisation ne remplace pas une sauvegarde indépendante.</span></div>`;
@@ -319,7 +345,7 @@ async function persist(message) {
   try {
     const result = await api(
       "/state",
-      { state, revision, accountId: user.id },
+      { state, revision, accountId: user.id, ownerId: user.ownerId || user.id },
       "PUT",
     );
     revision = result.revision;
@@ -329,7 +355,7 @@ async function persist(message) {
     toast(message);
   } catch (error) {
     syncError = error.message;
-    authExpired = error.status === 401 || error.code === "account_changed";
+    authExpired = error.status === 401 || error.code === "account_changed" || error.code === "owner_changed";
     toast("Vos modifications ne sont pas encore enregistrées.", true);
   } finally {
     saving = false;
@@ -365,7 +391,7 @@ function operationMenu(id, button) {
   menu.id = "operation-menu";
   menu.className = "operation-menu";
   menu.setAttribute("role", "menu");
-  menu.innerHTML = `<button role="menuitem" data-action="duplicate-transaction" data-id="${esc(id)}">${icon("plus")}Dupliquer</button><button role="menuitem" data-action="edit-transaction" data-id="${esc(id)}">${icon("edit")}Modifier</button><button role="menuitem" data-action="toggle-paid" data-id="${esc(id)}">${icon(t.status === "paid" ? "clock" : "check")}${remainingCents(t) > 0 ? "Enregistrer un règlement" : "Voir les règlements"}</button><button role="menuitem" data-action="attachments" data-id="${esc(id)}">${icon("folder")}Justificatifs</button><div class="menu-divider"></div><button class="danger-text" role="menuitem" data-action="delete-transaction" data-id="${esc(id)}">${icon("trash")}Supprimer</button>`;
+  menu.innerHTML = `<button role="menuitem" data-action="duplicate-transaction" data-id="${esc(id)}">${icon("plus")}Dupliquer</button><button role="menuitem" data-action="edit-transaction" data-id="${esc(id)}">${icon("edit")}Modifier</button><button role="menuitem" data-action="toggle-paid" data-id="${esc(id)}">${icon(t.status === "paid" ? "clock" : "check")}${remainingCents(t) > 0 ? "Enregistrer un règlement" : "Voir les règlements"}</button><button role="menuitem" data-action="attachments" data-id="${esc(id)}">${icon("folder")}Justificatifs</button><div class="menu-divider"></div>${t.cancelledAt ? "" : `<button class="danger-text" role="menuitem" data-action="${getPayments(t).length ? "cancel-transaction" : "delete-transaction"}" data-id="${esc(id)}">${icon("trash")}${getPayments(t).length ? "Annuler l’opération" : "Supprimer"}</button>`}`;
   document.body.append(menu);
   const r = button.getBoundingClientRect();
   menu.style.left = `${Math.max(8, Math.min(r.right - 235, innerWidth - 243))}px`;
@@ -407,6 +433,12 @@ function mountDialog(html) {
   dialogRoot.append(d);
   dialogFocus.set(d, focus);
   d.showModal();
+  if(d.classList.contains("help-dialog")) d.querySelector("[data-form-help]")?.remove();
+  else d.querySelector("[data-form-help]")?.addEventListener("click",()=>{
+    const title=d.querySelector("h2")?.textContent || "";
+    const target=/fournisseur/i.test(title)?"suppliers":/locataire/i.test(title)?"tenants":/location|loyer/i.test(title)?"leases":/périodicité/i.test(title)?"recurrences":/prêt|règlement/i.test(title)?"pointing":view;
+    helpUI.open(target);
+  });
   assistEntityFields(d);
   configureEntryForm(d);
   d.addEventListener("cancel", e => { e.preventDefault(); requestCloseDialog(d); });
@@ -430,7 +462,7 @@ const field = (name, label, value = "", type = "text", attrs = "") =>
 const selectField = (name, label, items, value) =>
   `<div class="form-field"><label for="field-${name}">${label}</label><select id="field-${name}" name="${name}">${options(items, value)}</select><span class="field-error" data-error="${name}"></span></div>`;
 const formHeader = (title, subtitle, ico) =>
-  `<div class="dialog-heading"><span class="dialog-mark">${icon(ico)}</span><button type="button" class="icon-button" data-close aria-label="Fermer">${icon("close")}</button></div><h2 id="dialog-title">${esc(title)}</h2><p class="dialog-description">${esc(subtitle)}</p>`;
+  `<div class="dialog-heading"><span class="dialog-mark">${icon(ico)}</span><button type="button" class="text-link form-help" data-form-help aria-label="Aide pour cette fiche">Aide</button><button type="button" class="icon-button" data-close aria-label="Fermer">${icon("close")}</button></div><h2 id="dialog-title">${esc(title)}</h2><p class="dialog-description">${esc(subtitle)}</p>`;
 const formFooter = (label = "Enregistrer") =>
   `<div class="dialog-footer"><button type="button" class="button secondary" data-close>Annuler</button><button type="submit" class="button primary">${icon("check")}${label}</button></div>`;
 function showErrors(dialog, errors) {
@@ -473,8 +505,9 @@ function allowMutation() {
 function transactionForm(id, duplicateId) {
   if (!allowMutation()) return;
   const existing = state.transactions.find((t) => t.id === id);
+  if (existing?.cancelledAt) { toast("Cette opération a été annulée. Consultez l’historique pour retrouver sa correction."); return; }
   const source = state.transactions.find(t => t.id === duplicateId);
-  const t = existing || (source ? { ...structuredClone(source), id: uid(), date: todayISO(), dueDate: "", period: todayISO().slice(0,7), status: "pending", payments: [], reference: "", recurrenceId: "", occurrenceDate: "" } : null) || {
+  const t = existing || (source ? { ...structuredClone(source), id: uid(), date: todayISO(), dueDate: "", period: todayISO().slice(0,7), status: "pending", payments: [], reference: "", cancelledAt: "", cancellationReason: "", recurrenceId: "", occurrenceDate: "" } : null) || {
     id: uid(),
     date: todayISO(),
     type: "income",
@@ -492,6 +525,7 @@ function transactionForm(id, duplicateId) {
     period: todayISO().slice(0, 7),
     detail: "",
   };
+  if (source && !existing) { delete t.cancelledAt; delete t.cancellationReason; }
   const d = mountDialog(
     `<dialog class="form-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader(existing ? "Modifier l’opération" : "Nouvelle opération", "Un libellé commun, une période claire, des comptes lisibles.", "receipt")}<div class="form-grid">${selectField(
       "type",
@@ -555,7 +589,7 @@ function transactionForm(id, duplicateId) {
         selectedTenant = lease.tenantId; form.elements.tenantId.value = lease.tenantId;
         form.elements.propertyId.value = lease.propertyId;
         form.elements.counterparty.value = state.tenants.find(n => n.id === lease.tenantId)?.name || "";
-        if (!existing && form.elements.rent) { form.elements.rent.value = moneyInput(lease.rentCents); form.elements.charges.value = moneyInput(lease.chargesCents); }
+        if (!existing && form.elements.rent) { const amounts=leaseRentAt(lease,form.elements.date.value);form.elements.rent.value=moneyInput(amounts.rentCents);form.elements.charges.value=moneyInput(amounts.chargesCents); }
         preview();
       }
     });
@@ -571,6 +605,14 @@ function transactionForm(id, duplicateId) {
   }
   parties();
   let acceptedDuplicate = "";
+  let rentalAmountEdited=false;
+  form.addEventListener("input",e=>{
+    if(["rent","charges"].includes(e.target.name)) rentalAmountEdited=true;
+    if(e.target.name==="date" && !existing && !rentalAmountEdited && selectedLease && form.elements.rent) {
+      const lease=state.leases.find(l=>l.id===selectedLease);
+      if(lease) {const amounts=leaseRentAt(lease,form.elements.date.value);form.elements.rent.value=moneyInput(amounts.rentCents);form.elements.charges.value=moneyInput(amounts.chargesCents);}
+    }
+  });
   function preview() {
     const total = d.querySelector("#loan-total");
     if (total) {
@@ -719,6 +761,10 @@ function viewProperty(id) {
   d.querySelector("#dossier-new-lease").addEventListener("click", () => { closeDialog(); directoryUI.leaseForm(undefined,"",id); });
   d.querySelector("#dossier-operations").addEventListener("click", () => { closeDialog(); propertyId=id; navigate("transactions"); });
 }
+function cancelForm(t) {
+  const d=mountDialog(`<dialog class="form-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader("Annuler l’opération", transactionLabel(t,state),"flag")}<p class="form-note">Cette annulation retire l’opération des totaux. Le mouvement d’origine et ses règlements restent conservés pour comprendre la correction.</p>${field("reason","Motif de l’annulation *","","text",'maxlength="1000" required')}${formFooter("Confirmer l’annulation")}</form></dialog>`);
+  d.querySelector("form").addEventListener("submit",e=>{e.preventDefault();try{cancelTransaction(state,t.id,d.querySelector("[name=reason]").value);closeDialog();persist("L’annulation a été enregistrée dans l’historique.");}catch(error){showErrors(d,{reason:error.message});}});
+}
 function propertyForm(id) {
   if (!allowMutation()) return;
   const existing = propertyFor(id);
@@ -731,8 +777,10 @@ function propertyForm(id) {
     chargesCents: 0,
     archived: false,
   };
+  const currentLease = activeLeaseFor(p.id);
+  const currentAmounts = currentLease ? leaseRentAt(currentLease) : null;
   const d = mountDialog(
-    `<dialog class="form-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader(existing ? "Modifier le bien" : "Ajouter un bien", "Une nouvelle adresse dans votre espace.", "building")}${field("name", "Nom court du bien *", p.name, "text", 'maxlength="100" required autofocus placeholder="Ex. : Appartement du centre"')}${field("address", "Adresse", p.address, "text", 'maxlength="250"')}${p.tenant && !(state.leases || []).some(l=>l.propertyId===p.id) ? field("tenant", "Ancien locataire (nom historique)", p.tenant, "text", 'maxlength="160" readonly') : ""}<div class="form-grid">${field("rent", "Loyer mensuel hors charges (€)", moneyInput(p.rentCents), "text", 'inputmode="decimal"')}${field("charges", "Provisions mensuelles (€)", moneyInput(p.chargesCents), "text", 'inputmode="decimal"')}</div><p class="form-note">Ces montants sont des références. Pour conserver les changements de locataire, créez les fiches dans « Locataires » puis les occupations dans « Locations ». Le loyer périodique se prépare depuis la location.</p><fieldset class="property-suppliers"><legend>Fournisseurs rattachés au bien</legend><input type="search" id="supplier-assignment-search" aria-label="Rechercher un fournisseur à rattacher" placeholder="Rechercher un fournisseur…">${(state.suppliers || []).filter(s => !s.archived || (p.supplierIds || []).includes(s.id)).map(s => `<label class="check-label" data-supplier-choice="${esc(fold(s.name))}"><input type="checkbox" name="supplierIds" value="${esc(s.id)}" ${(p.supplierIds || []).includes(s.id) ? "checked" : ""}>${esc(s.name)}</label>`).join("") || '<p class="form-note">Créez vos fiches dans Fournisseurs pour les rattacher ici.</p>'}</fieldset>${existing ? `<button type="button" class="text-link" id="property-lease">Rattacher un locataire via une location</button>` : ""}${formFooter(existing ? "Enregistrer" : "Ajouter le bien")}</form></dialog>`,
+    `<dialog class="form-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader(existing ? "Modifier le bien" : "Ajouter un bien", "Une nouvelle adresse dans votre espace.", "building")}${field("name", "Nom court du bien *", p.name, "text", 'maxlength="100" required autofocus placeholder="Ex. : Appartement du centre"')}${field("address", "Adresse", p.address, "text", 'maxlength="250"')}${p.tenant && !(state.leases || []).some(l=>l.propertyId===p.id) ? field("tenant", "Ancien locataire (nom historique)", p.tenant, "text", 'maxlength="160" readonly') : ""}${currentLease ? `<div class="payment-summary"><span>Loyer du bail : ${money(currentAmounts.rentCents)}</span><span>Provisions : ${money(currentAmounts.chargesCents)}</span></div><input type="hidden" name="rent" value="${moneyInput(p.rentCents)}"><input type="hidden" name="charges" value="${moneyInput(p.chargesCents)}"><p class="form-note">Pour changer ces montants à une date précise, ouvrez la location depuis le dossier du bien.</p>` : `<div class="form-grid">${field("rent", "Loyer mensuel hors charges (€)", moneyInput(p.rentCents), "text", 'inputmode="decimal"')}${field("charges", "Provisions mensuelles (€)", moneyInput(p.chargesCents), "text", 'inputmode="decimal"')}</div>`}<p class="form-note">Ces montants sont des références. Pour conserver les changements de locataire, créez les fiches dans « Locataires » puis les occupations dans « Locations ». Le loyer périodique se prépare depuis la location.</p><fieldset class="property-suppliers"><legend>Fournisseurs rattachés au bien</legend><input type="search" id="supplier-assignment-search" aria-label="Rechercher un fournisseur à rattacher" placeholder="Rechercher un fournisseur…">${(state.suppliers || []).filter(s => !s.archived || (p.supplierIds || []).includes(s.id)).map(s => `<label class="check-label" data-supplier-choice="${esc(fold(s.name))}"><input type="checkbox" name="supplierIds" value="${esc(s.id)}" ${(p.supplierIds || []).includes(s.id) ? "checked" : ""}>${esc(s.name)}</label>`).join("") || '<p class="form-note">Créez vos fiches dans Fournisseurs pour les rattacher ici.</p>'}</fieldset>${existing ? `<button type="button" class="text-link" id="property-lease">Rattacher un locataire via une location</button>` : ""}${formFooter(existing ? "Enregistrer" : "Ajouter le bien")}</form></dialog>`,
   );
   d.querySelector("#supplier-assignment-search").addEventListener("input", e => d.querySelectorAll("[data-supplier-choice]").forEach(label => label.hidden = !label.dataset.supplierChoice.includes(fold(e.target.value))));
   d.querySelector("#property-lease")?.addEventListener("click", () => directoryUI.leaseForm(undefined, "", p.id));
@@ -802,7 +850,7 @@ function confirmDialog(title, text, label, onConfirm) {
 function authDialog(mode = "register") {
   if (user && dirty) mode = "login";
   const d = mountDialog(
-    `<dialog class="auth-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader(mode === "register" ? "Bienvenue chez vous." : "Content de vous retrouver.", "Votre SCI, accessible avec le même compte sur vos appareils.", "lock")}<div class="auth-tabs"><button type="button" data-auth="register" class="${mode === "register" ? "active" : ""}">Créer mon espace</button><button type="button" data-auth="login" class="${mode === "login" ? "active" : ""}">Se connecter</button></div>${mode === "register" ? field("name", "Nom de votre SCI", "Ma SCI", "text", 'maxlength="100" required') : ""}${field("email", "Adresse e-mail", "", "email", 'autocomplete="email" required')}${field("password", "Mot de passe", "", "password", `minlength="12" maxlength="128" autocomplete="${mode === "register" ? "new-password" : "current-password"}" required`)}<p class="form-note">${mode === "register" ? "Choisissez au moins 12 caractères. Votre compte commence avec une SCI à l’IS, sans les exemples de la démonstration." : "Utilisez les identifiants de votre compte Cap SCI sur ce même serveur."}</p><p class="auth-error" role="alert"></p><button class="button primary auth-submit" type="submit">${icon("lock")}${mode === "register" ? "Créer mon compte" : "Se connecter"}</button></form></dialog>`,
+    `<dialog class="auth-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader(mode === "register" ? invitationToken ? "Créer votre accès personnel" : "Bienvenue chez vous." : "Content de vous retrouver.", "Votre SCI, accessible avec le même compte sur vos appareils.", "lock")}<div class="auth-tabs"><button type="button" data-auth="register" class="${mode === "register" ? "active" : ""}">Créer mon espace</button><button type="button" data-auth="login" class="${mode === "login" ? "active" : ""}">Se connecter</button></div>${mode === "register" && !invitationToken ? field("name", "Nom de votre SCI", "Ma SCI", "text", 'maxlength="100" required') : ""}${field("email", "Adresse e-mail", "", "email", 'autocomplete="email" required')}${field("password", "Mot de passe", "", "password", `minlength="12" maxlength="128" autocomplete="${mode === "register" ? "new-password" : "current-password"}" required`)}<p class="form-note">${mode === "register" ? invitationToken ? "Utilisez l’adresse e-mail invitée et choisissez au moins 12 caractères. Vous confirmerez ensuite l’accès à la SCI partagée." : "Choisissez au moins 12 caractères. Votre compte commence avec une SCI à l’IS, sans les exemples de la démonstration." : "Utilisez les identifiants de votre compte Cap SCI sur ce même serveur."}</p><p class="auth-error" role="alert"></p><button class="button primary auth-submit" type="submit">${icon("lock")}${mode === "register" ? "Créer mon compte" : "Se connecter"}</button></form></dialog>`,
   );
   d.querySelectorAll("[data-auth]").forEach((b) =>
     b.addEventListener("click", () => { closeDialog(); authDialog(b.dataset.auth); }),
@@ -824,10 +872,10 @@ function authDialog(mode = "register") {
         );
       const result = await api(
         mode === "register" ? "/register" : "/login",
-        values,
+        {...values,...(mode==="register" && invitationToken?{invitationToken,name:"Mon accès SCI"}:{})},
       );
       if (user && dirty) {
-        if (result.user.id !== user.id)
+        if (result.user.id !== user.id || (result.user.ownerId || result.user.id) !== (user.ownerId || user.id))
           throw new Error(
             "Le compte d’origine est introuvable. Exportez vos modifications avant de recharger les données.",
           );
@@ -839,6 +887,7 @@ function authDialog(mode = "register") {
       acceptSession(result);
       closeDialog();
       shell();
+      if(invitationToken) offerInvitation();
       toast(
         mode === "register"
           ? "Votre espace est créé. Ajoutez votre premier bien."
@@ -852,7 +901,7 @@ function authDialog(mode = "register") {
   });
 }
 function acceptSession(result) {
-  if (user?.id !== result.user?.id) attachmentStatus.reset();
+  if (user?.id !== result.user?.id || user?.ownerId !== result.user?.ownerId) attachmentStatus.reset();
   state = parseBackup(result.state);
   user = result.user;
   revision = result.revision;
@@ -899,11 +948,15 @@ async function importFile(e) {
       "Restaurer cette sauvegarde ?",
       `${next.settings.name} · ${next.properties.length} biens · ${next.transactions.length} opérations. Cette action remplacera les données actuelles de cet espace. Exportez-les d’abord si vous souhaitez les conserver.`,
       "Remplacer mes données",
-      () => {
-        state = next;
-        if (user) state.mode = "real";
-        propertyId = "all";
-        persist("La sauvegarde a été restaurée.");
+      async () => {
+        if (!user) { state=next;propertyId="all";persist("La sauvegarde a été restaurée.");return; }
+        try {
+          saving=true;shell();
+          const result=await api("/restore",{state:next,revision,accountId:user.id,ownerId:user.ownerId || user.id});
+          acceptSession({...result,user:result.user || user});
+          toast("La sauvegarde a été restaurée. L’état précédent a été conservé dans l’historique.");
+        } catch(error) {toast(error.message,true);}
+        finally {saving=false;shell();}
       },
     );
   } catch (error) {
@@ -938,6 +991,8 @@ document.addEventListener("click", async (e) => {
     navigate("exports");
     return;
   }
+  if (action==="help") {helpUI.open(view);return;}
+  if (accountUI.action(action,id)) return;
   if (directoryUI.action(action, id)) return;
   if (financeUI.action(action, id)) return;
   if (action === "view-property") { viewProperty(id); return; }
@@ -952,18 +1007,11 @@ document.addEventListener("click", async (e) => {
   else if (action === "auth") authDialog();
   else if (action === "reauth") authDialog("login");
   else if (action === "operation-menu") operationMenu(id, button);
-  else if (action === "delete-transaction" && allowMutation()) {
-    const t = state.transactions.find((t) => t.id === id);
-    if (t)
-      confirmDialog(
-        "Supprimer cette opération ?",
-        `« ${t.label} » sera supprimée du suivi. Cette action est définitive.`,
-        "Supprimer l’opération",
-        () => {
-          state.transactions = state.transactions.filter((t) => t.id !== id);
-          persist("L’opération a été supprimée.");
-        },
-      );
+  else if ((action === "delete-transaction" || action === "cancel-transaction") && allowMutation()) {
+    const t = state.transactions.find(t=>t.id===id);
+    if(t?.cancelledAt) return;
+    if(t && (getPayments(t).length || action==="cancel-transaction")) cancelForm(t);
+    else if(t) confirmDialog("Supprimer cette opération prévue ?", "L’opération non réglée sera retirée. La suppression restera dans l’historique.", "Supprimer l’opération",()=>{state.transactions=state.transactions.filter(t=>t.id!==id);persist("L’opération prévue a été supprimée.");});
   } else if (action === "toggle-paid" && allowMutation()) {
     const t = state.transactions.find((t) => t.id === id);
     if (t)
@@ -1129,16 +1177,29 @@ exportUI = createExportUI({
   download,
   toast,
 });
+function offerInvitation() {
+  if(!invitationToken || invitationPresented || !user || dirty) return;
+  invitationPresented=true;
+  const d=mountDialog(`<dialog class="form-dialog" aria-labelledby="dialog-title">${formHeader("Rejoindre la SCI partagée", "Cette invitation vous donne un accès personnel à la SCI de l’autre personne.", "lock")}<p>Connecté avec ${esc(user.email)}. Vous devez utiliser l’adresse qui a reçu l’invitation. Votre espace personnel doit être vide pour le rattacher.</p><p class="finance-error" role="alert"></p><div class="dialog-footer"><button class="button secondary" data-close>Plus tard</button><button class="button primary" id="accept-invitation">Rejoindre la SCI</button></div></dialog>`);
+  d.querySelector("#accept-invitation").addEventListener("click",async e=>{
+    e.currentTarget.disabled=true;
+    try {await api("/access/accept",{token:invitationToken});const result=await api("/session");acceptSession(result);invitationToken="";const url=new URL(location.href);url.searchParams.delete("invite");history.replaceState({},"",url);closeDialog();shell();toast("Vous avez rejoint la SCI partagée avec votre propre compte.");}
+    catch(error){d.querySelector(".finance-error").textContent=error.message;e.currentTarget.disabled=false;}
+  });
+}
 const sharedDirectoryContext = {
   getState: () => state, setState: next => { state = next; }, getUser: () => user,
   persist, mountDialog, closeDialog, formHeader, formFooter, field, selectField, showErrors, options, allowMutation, toast, confirmDialog,
   openEntityDocuments: (kind, id) => entityDocumentsUI.open(kind, id),
   createRecurrenceForLease: id => financeUI.createFromLease(id),
   editTransaction: id => transactionForm(id),
+  navigate, reloadSession: reloadFromServer,
   viewProperty,
 };
 entityDocumentsUI = createEntityDocumentsUI(sharedDirectoryContext);
 directoryUI = createDirectoryUI(sharedDirectoryContext);
+helpUI = createHelpUI(sharedDirectoryContext);
+accountUI = createAccountUI(sharedDirectoryContext);
 app.innerHTML = '<div class="loading-state">Chargement de votre espace…</div>';
 try {
   acceptSession(await api("/session"));
@@ -1146,3 +1207,5 @@ try {
   if (error.status !== 401) serverUnavailable = true;
 }
 shell();
+
+if(invitationToken) { if(user) offerInvitation(); else authDialog("register"); }

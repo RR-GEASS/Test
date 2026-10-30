@@ -1,3 +1,4 @@
+import { revealNav } from "./navigation.js";
 import { test, expect } from "@playwright/test";
 
 async function register(page) {
@@ -15,6 +16,7 @@ async function saved(page) {
 }
 async function go(page, view) {
   const item = page.locator(`aside nav [data-view="${view}"]`);
+  await revealNav(page,item);
   if (!(await item.isVisible())) await page.getByRole("button", { name: "Ouvrir la navigation" }).click();
   await item.click();
 }
@@ -138,4 +140,21 @@ test("terminer une location avant la première échéance met sa périodicité e
   const savedState = await state(page);
   expect(savedState.leases[0].endDate).toBe(`${year}-01-31`);
   expect(savedState.recurrences[0]).toMatchObject({ active: false, startDate: `${year}-02-01`, endDate: "" });
+});
+
+
+test("une location vraiment vide peut être supprimée avant de la recréer correctement",async({page})=>{
+  await register(page);
+  await property(page);
+  await tenant(page,"Locataire à corriger");
+  await lease(page,"Locataire à corriger","2026-01-01");
+  await page.getByTestId("lease-card").getByRole("button",{name:/Ouvrir la location/}).click();
+  await top(page).getByRole("button",{name:/Supprimer cette location vide/}).click();
+  await top(page).getByRole("button",{name:"Supprimer la location vide",exact:true}).click();
+  await expect(page.locator("dialog[open]")).toHaveCount(0);
+  await expect(page.getByTestId("lease-card")).toHaveCount(0);
+  await page.reload();
+  expect((await state(page)).leases).toHaveLength(0);
+  expect((await state(page)).tenants).toHaveLength(1);
+  expect((await state(page)).properties).toHaveLength(1);
 });

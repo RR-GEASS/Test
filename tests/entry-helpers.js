@@ -1,3 +1,4 @@
+import { revealNav } from "./navigation.js";
 import { expect } from '@playwright/test';
 // Explicitly load historical fixtures before UI flows; normal application saves
 // still use the real endpoint and its mandatory-field checks.
@@ -18,6 +19,7 @@ export async function rentalFixtures(page) {
   if(active) {
     const b=page.locator(`aside nav [data-view="${active}"]`);
     await expect(b).toBeAttached();
+    await revealNav(page,b);
     if(!await b.isVisible())await page.getByRole('button',{name:'Ouvrir la navigation'}).click();
     await b.click();
   }

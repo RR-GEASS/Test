@@ -5,6 +5,7 @@ import {
   exportSelection,
   normalizeExportOptions,
   accountantCSVs,
+  annualAccountantOptions,
 } from "../src/accountant-export.js";
 function fixture() {
   const s = createEmptyState();
@@ -303,4 +304,54 @@ test("les références du répertoire complètent le tiers historique sans trans
   assert.ok(!csv.includes("Nom actuel de la fiche"));
   assert.equal(normalizeExportOptions(s, january).includeLeaseDocuments, false);
   assert.throws(() => normalizeExportOptions(s, { ...january, includeLeaseDocuments: "true" }), /options/);
+});
+
+
+test("le dossier annuel inclut les factures non réglées et les règlements de dettes antérieures", () => {
+  const s = fixture();
+  const options = annualAccountantOptions(2026);
+  const result = exportSelection(s, options, { today: "2026-02-01" });
+  assert.deepEqual(result.transactions.map(t => t.id), ["t1", "t2", "t3"]);
+  assert.equal(result.transactions.find(t => t.id === "t2").payments.length, 0);
+  assert.equal(result.payments.filter(p => p.inRange).length, 2);
+  assert.equal(result.summary.periodIncomeCents, 52500);
+  assert.equal(result.summary.periodExpenseCents, 0);
+  assert.equal(options.includeCancelled, false);
+  assert.equal(options.includeLeaseDocuments, false);
+  assert.throws(() => annualAccountantOptions(99));
+});
+
+test("le filtre en retard inclut aussi les échéances partiellement réglées", () => {
+  const s = fixture();
+  s.transactions[1].payments = [{ id: "partial", date: "2026-01-15", amountCents: 2000, rentCents: 0, chargesCents: 0 }];
+  const options = { ...january, dateBasis: "due", statuses: ["overdue"] };
+  const result = exportSelection(s, options, { today: "2026-02-01" });
+  assert.deepEqual(result.transactions.map(t => t.id), ["t2"]);
+  assert.equal(result.summary.periodExpenseCents, 2000);
+  assert.equal(exportSelection(s, { ...options, statuses: ["partial"] }, { today: "2026-02-01" }).transactions.length, 1);
+});
+
+test("une annulation reste hors du dossier courant et son historique explicite ne crée pas de flux", () => {
+  const s = fixture();
+  Object.assign(s.transactions[2], { cancelledAt: "2026-01-31", cancellationReason: "Double saisie corrigée" });
+  const standard = exportSelection(s, january);
+  assert.deepEqual(standard.transactions.map(t => t.id), ["t1"]);
+  const trace = exportSelection(s, { ...january, includeCancelled: true });
+  assert.deepEqual(trace.transactions.map(t => t.id), ["t1", "t3"]);
+  assert.deepEqual(trace.payments.map(p => p.id), ["r2"]);
+  assert.equal(trace.summary.periodIncomeCents, 42500);
+  const csv = accountantCSVs(s, trace)["operations.csv"];
+  const rows = csv.split("\r\n");
+  const cells = row => [...row.matchAll(/"((?:""|[^"])*)"/g)].map(m => m[1].replace(/""/g,'"'));
+  const headers = cells(rows[0]);
+  const cancelled = Object.fromEntries(cells(rows.find(row => row.startsWith('"t3";'))).map((value,index) => [headers[index],value]));
+  assert.equal(cancelled["Statut à la date de l’export"], "Annulée");
+  assert.equal(cancelled["Date d’annulation"], "2026-01-31");
+  assert.equal(cancelled["Motif d’annulation"], "Double saisie corrigée");
+  assert.equal(cancelled["Règlements conservés avant annulation EUR"], "100,00");
+  assert.equal(cancelled["Total réglé historique EUR"], "0,00");
+  assert.equal(cancelled["Encaissements dans la plage EUR"], "0,00");
+  assert.equal(cancelled["Reste à régler EUR"], "0,00");
+  assert.equal(s.transactions[2].payments.length, 1);
+  assert.throws(() => normalizeExportOptions(s, { ...january, includeCancelled: "true" }));
 });

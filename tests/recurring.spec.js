@@ -1,3 +1,4 @@
+import { revealNav } from "./navigation.js";
 import { completeEntry, rentalFixtures } from "./entry-helpers.js";
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
@@ -14,6 +15,7 @@ async function navigate(page, name) {
     name: name === "Biens immobiliers" ? /^Biens immobiliers/ : name,
     exact: name !== "Biens immobiliers",
   });
+  await revealNav(page,button);
   if (!(await button.isVisible()))
     await page.getByRole("button", { name: "Ouvrir la navigation" }).click();
   await button.click();
@@ -95,8 +97,9 @@ async function createRecurrence(page, { expense = false } = {}) {
     await dialog.getByLabel("Montant (€) *").fill("42");
     await dialog.getByLabel("Détail", { exact: true }).fill("Assurance PNO");
   } else {
-    await dialog.getByLabel("Loyer hors charges (€) *").fill("800");
-    await dialog.getByLabel("Provisions sur charges (€)").fill("50");
+    const rentInput=dialog.getByLabel("Loyer hors charges (€) *"), chargesInput=dialog.getByLabel("Provisions sur charges (€)");
+    if(await rentInput.isEditable()) await rentInput.fill("800"); else await expect(rentInput).toHaveValue("800,00");
+    if(await chargesInput.isEditable()) await chargesInput.fill("50"); else await expect(chargesInput).toHaveValue("50,00");
   }
   await completeEntry(page,dialog);
   await dialog

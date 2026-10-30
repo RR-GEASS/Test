@@ -1,3 +1,4 @@
+import { revealNav } from "./navigation.js";
 import { test, expect } from "@playwright/test";
 const today = () => {
   const d = new Date();
@@ -5,7 +6,7 @@ const today = () => {
 };
 async function navigate(page,name) {
   const button = page.locator("aside nav").getByRole("button",{name,exact:true});
-  await expect(button).toBeAttached();
+  await revealNav(page,button);
   if (!(await button.isVisible())) await page.getByRole("button",{name:"Ouvrir la navigation"}).click();
   await button.click();
 }
@@ -103,4 +104,46 @@ test("plusieurs pièces peuvent être ajoutées même si l’une d’elles est r
   await expect(d.getByRole("link")).toHaveCount(2);
   await expect(d.getByRole("alert")).toContainText("faux.pdf");
   await expect(d.getByRole("alert")).toContainText("2 fichier(s) enregistré(s)");
+});
+
+test("un changement de loyer daté actualise les échéances sans règlement et garde l’historique pointé", async ({page}) => {
+  await register(page);
+  const month=today().slice(0,7), first=`${month}-01`;
+  const previousDate=new Date(`${first}T12:00:00`); previousDate.setMonth(previousDate.getMonth()-1);
+  const previous=`${previousDate.getFullYear()}-${String(previousDate.getMonth()+1).padStart(2,'0')}-01`;
+  const [year,number]=first.split('-').map(Number);
+  const end=`${month}-${String(new Date(year,number,0).getDate()).padStart(2,'0')}`;
+  const linked={tenantId:"rent-tenant",leaseId:"rent-lease",propertyId:"rent-property",type:"income",category:"rent",counterparty:"Locataire loyer",rentCents:80000,chargesCents:5000,amountCents:85000,reference:"",notes:"",dueDate:"",normalizedLabel:false};
+  await seed(page,{
+    properties:[property("rent-property","Bien loyer")],
+    tenants:[{id:"rent-tenant",name:"Locataire loyer",email:"",phone:"",address:"",notes:"",archived:false}],
+    leases:[{id:"rent-lease",propertyId:"rent-property",tenantId:"rent-tenant",startDate:`${year-1}-01-01`,endDate:"",rentCents:80000,chargesCents:5000,depositCents:80000,paymentDay:1,notes:""}],
+    recurrences:[{id:"rent-rule",...linked,label:"Loyer périodique",frequency:"monthly",startDate:first,endDate:"",active:true,generatedThrough:end,paymentDay:1}],
+    transactions:[
+      {id:"old-paid",...linked,label:"Ancien loyer réglé",date:previous,status:"paid",payments:[{id:"old-payment",date:previous,amountCents:85000,rentCents:80000,chargesCents:5000}]},
+      {id:"future-unpaid",...linked,label:"Loyer à préparer",date:first,status:"pending",payments:[]}
+    ]
+  });
+  await navigate(page,"Locations");
+  await page.getByTestId("lease-card").getByRole("button",{name:/Ouvrir la location/}).click();
+  await page.getByRole("dialog").getByRole("button",{name:/Modifier le loyer/}).click();
+  const dialog=page.getByRole("dialog");
+  await dialog.locator('[name=effectiveDate]').fill(first);
+  await dialog.locator('[name=rent]').fill("850");
+  await dialog.locator('[name=charges]').fill("60");
+  await dialog.getByRole("button",{name:"Appliquer le changement",exact:true}).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.getByText("Enregistré en ligne",{exact:true})).toBeVisible();
+  await page.reload();
+  const saved=await state(page);
+  expect(saved.leases[0].rentChanges).toEqual([{effectiveDate:first,rentCents:85000,chargesCents:6000}]);
+  expect(saved.transactions.find(t=>t.id==="old-paid").amountCents).toBe(85000);
+  expect(saved.transactions.find(t=>t.id==="old-paid").payments[0].amountCents).toBe(85000);
+  expect(saved.transactions.find(t=>t.id==="future-unpaid").amountCents).toBe(91000);
+  expect(saved.recurrences[0].amountCents).toBe(91000);
+  await navigate(page,"Locations");
+  await page.getByTestId("lease-card").getByRole("button",{name:/Ouvrir la location/}).click();
+  await page.getByRole("dialog").getByRole("button",{name:/Préparer le loyer périodique/}).click();
+  await expect(page.getByRole("dialog").getByRole("heading",{name:"Modifier la périodicité",exact:true})).toBeVisible();
+  expect((await state(page)).recurrences).toHaveLength(1);
 });

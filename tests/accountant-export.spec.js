@@ -1,3 +1,4 @@
+import { revealNav } from "./navigation.js";
 import { completeEntry, rentalFixtures } from "./entry-helpers.js";
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
@@ -14,6 +15,7 @@ async function navigate(page, name) {
     name: name === "Biens immobiliers" ? /^Biens immobiliers/ : name,
     exact: name !== "Biens immobiliers",
   });
+  await revealNav(page,button);
   if (!(await button.isVisible()))
     await page.getByRole("button", { name: "Ouvrir la navigation" }).click();
   await button.click();

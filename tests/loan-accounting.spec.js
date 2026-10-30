@@ -1,3 +1,4 @@
+import { revealNav } from "./navigation.js";
 import { completeEntry } from "./entry-helpers.js";
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
@@ -10,6 +11,7 @@ const monthStart = (offset = 0) => {
 };
 async function navigate(page, name) {
   const button = page.locator("aside nav").getByRole("button", { name, exact: true });
+  await revealNav(page,button);
   if (!(await button.isVisible())) await page.getByRole("button", { name: "Ouvrir la navigation" }).click();
   await button.click();
 }
@@ -59,7 +61,7 @@ test("le prêt périodique se corrige par échéance dans le pointage et conserv
   await dialog.getByLabel("Catégorie", { exact: true }).selectOption("loan_payment");
   await split(dialog, "750", "220", "30");
   await completeEntry(page,dialog,"Banque du bien");
-  await dialog.locator('[name="reference"]').fill("PRET-123");
+  await expect(dialog.locator('[name="reference"]')).toHaveCount(0);
   await dialog.locator('[name="notes"]').fill("Tableau bancaire à vérifier");
   await dialog.getByLabel("Date de début *").fill(monthStart(-1));
   await dialog.getByRole("button", { name: "Créer la périodicité", exact: true }).click();
@@ -69,7 +71,7 @@ test("le prêt périodique se corrige par échéance dans le pointage et conserv
   expect(initial.transactions).toHaveLength(2);
   expect(initial.recurrences[0]).toMatchObject({ amountCents: 100000, capitalCents: 75000, interestCents: 22000, insuranceCents: 3000 });
   for (const transaction of initial.transactions)
-    expect(transaction).toMatchObject({ counterparty: "Banque du bien", reference: "PRET-123", notes: "Tableau bancaire à vérifier" });
+    expect(transaction).toMatchObject({ counterparty: "Banque du bien", reference: "", notes: "Tableau bancaire à vérifier" });
 
   await navigate(page, "Pointage mensuel");
   const row = page.getByTestId("pointing-row");
@@ -114,7 +116,7 @@ test("le prêt périodique se corrige par échéance dans le pointage et conserv
   expect(csv).toContain("Capital de prêt attendu EUR");
   expect(csv).toContain('"765,00";"205,00";"35,00"');
   expect(csv).toContain("Banque du bien");
-  expect(csv).toContain("PRET-123");
+  expect(csv).not.toContain("PRET-123");
   expect(csv).toContain("Tableau bancaire à vérifier");
 });
 

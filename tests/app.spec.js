@@ -1,3 +1,4 @@
+import { revealNav } from "./navigation.js";
 import { completeEntry } from "./entry-helpers.js";
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
@@ -86,13 +87,8 @@ async function addTransaction(page, label = "Loyer de test", settings = {}) {
   ).toBeVisible();
 }
 async function navigate(page, name) {
-  await page
-    .locator("aside nav")
-    .getByRole("button", {
-      name: name === "Biens immobiliers" ? /^Biens immobiliers/ : name,
-      exact: name !== "Biens immobiliers",
-    })
-    .click();
+  const button=page.locator("aside nav").getByRole("button",{name:name==="Biens immobiliers"?/^Biens immobiliers/:name,exact:name!=="Biens immobiliers"});
+  await revealNav(page,button);await button.click();
 }
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
@@ -502,7 +498,7 @@ test("une session interrompue permet de se reconnecter sans perdre l’opératio
   await navigate(page, "Opérations");
   await expect(row(page, "Règlement après reconnexion")).toHaveCount(1);
 });
-test("les libellés restent du texte dans les confirmations de suppression", async ({
+test("les libellés restent du texte dans les confirmations d’annulation", async ({
   page,
 }) => {
   await register(page);
@@ -510,7 +506,7 @@ test("les libellés restent du texte dans les confirmations de suppression", asy
   await addTransaction(page, label);
   await navigate(page, "Opérations");
   await row(page, label).locator("[data-action=operation-menu]").click();
-  await page.getByRole("menuitem", { name: "Supprimer", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Annuler l’opération", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText(label);
   await expect(dialog.locator("img")).toHaveCount(0);

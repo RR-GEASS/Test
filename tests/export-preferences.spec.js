@@ -59,3 +59,40 @@ test("le contrôle avant export utilise les pièces du compte et respecte les di
   await expect(page.locator("#export-preflight")).toContainText("2 référence(s) non renseignée(s)");
   await expect(page.getByLabel("Inclure les baux et avenants liés", { exact: true })).not.toBeChecked();
 });
+
+
+test("le dossier annuel remet les filtres à zéro et inclut les non-réglées ainsi que les règlements d’années antérieures", async ({ page }) => {
+  await page.goto("/");
+  const year = new Date().getFullYear();
+  await page.evaluate(async year => {
+    const registration = await fetch("/api/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: `annual-${crypto.randomUUID()}@example.test`, password: "annual-browser-password-2026", name: "SCI annuelle" }) });
+    if (!registration.ok) throw new Error(await registration.text());
+    const account = await registration.json();
+    const base = { type: "expense", category: "insurance", status: "pending", propertyId: "", amountCents: 10000, rentCents: 0, chargesCents: 0, counterparty: "Assureur", reference: "", notes: "" };
+    account.state.transactions = [
+      { ...base, id: "unpaid-current", label: "Facture de décembre non réglée", date: `${year}-12-10`, dueDate: `${year}-12-10`, period: `${year}-12`, payments: [] },
+      { ...base, id: "prior-paid", label: "Dette ancienne payée cette année", status: "paid", date: `${year-1}-12-10`, dueDate: `${year-1}-12-10`, period: `${year-1}-12`, payments: [{ id: "settled-now", date: `${year}-01-15`, amountCents: 10000, rentCents: 0, chargesCents: 0 }] },
+      { ...base, id: "cancelled", label: "Facture annulée", status: "paid", date: `${year}-01-10`, dueDate: `${year}-01-10`, period: `${year}-01`, cancelledAt: `${year}-01-20`, cancellationReason: "Doublon", payments: [{ id: "old-settlement", date: `${year}-01-15`, amountCents: 10000, rentCents: 0, chargesCents: 0 }] },
+    ];
+    const saved = await fetch("/api/test-fixtures/state", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state: account.state, revision: account.revision, accountId: account.user.id }) });
+    if (!saved.ok) throw new Error(await saved.text());
+  }, year);
+  await page.reload();
+  await exportsPage(page);
+  await page.getByRole("button", { name: "Année en cours", exact: true }).click();
+  await page.getByLabel("Réglées", { exact: true }).check();
+  await page.getByLabel("Tout inclure", { exact: true }).uncheck();
+  await expect(page.getByTestId("export-operation-count")).toHaveText("0");
+  await page.getByRole("button", { name: "Dossier annuel comptable", exact: true }).click();
+  await expect(page.getByLabel("Dates à utiliser", { exact: true })).toHaveValue("annual");
+  await expect(page.getByLabel("Réglées", { exact: true })).not.toBeChecked();
+  await expect(page.getByTestId("export-operation-count")).toHaveText("2");
+  await expect(page.getByTestId("export-operation-row").filter({ hasText: "Facture de décembre non réglée" })).toHaveCount(1);
+  await expect(page.getByTestId("export-operation-row").filter({ hasText: "Dette ancienne payée cette année" })).toHaveCount(1);
+  await expect(page.getByLabel("Inclure les justificatifs", { exact: true })).toBeChecked();
+  await page.getByText("Historique des annulations", { exact: true }).click();
+  await page.getByLabel("Inclure les opérations annulées", { exact: true }).check();
+  await expect(page.getByTestId("export-operation-count")).toHaveText("3");
+  await expect(page.getByTestId("export-payment-count")).toHaveText("1");
+  await expect(page.getByTestId("export-operation-row").filter({ hasText: "Facture annulée" })).toContainText("Annulée");
+});
