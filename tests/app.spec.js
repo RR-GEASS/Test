@@ -288,7 +288,8 @@ test("les exports CSV et JSON se téléchargent et un import invalide conserve l
     mimeType: "application/json",
     buffer: Buffer.from("{invalid"),
   });
-  await expect(page.getByRole("status")).toContainText("JSON valide");
+  await expect(page.locator("#toast")).toHaveAttribute("role", "alert");
+  await expect(page.locator("#toast")).toContainText("JSON valide");
   await navigate(page, "Opérations");
   await expect(row(page, "Opération à sauvegarder")).toHaveCount(1);
 });
@@ -434,7 +435,11 @@ test("un conflit entre appareils conserve la version du serveur et propose de r�
     await d
       .getByRole("button", { name: "Ajouter l’opération", exact: true })
       .click();
-    await expect(other.getByRole("alert")).toContainText("autre appareil");
+    await expect(d.locator(".dialog-save-error")).toContainText("autre appareil");
+    await expect(d.getByLabel("Montant (€) *")).toHaveValue("25");
+    await d.getByRole("button", { name: "Fermer et voir les options de récupération", exact: true }).click();
+    await expect(d).not.toBeVisible();
+    await expect(other.locator("#notice-area [role=alert]")).toContainText("autre appareil");
     await expect(
       other.getByText("Non enregistré", { exact: true }),
     ).toBeVisible();
@@ -483,6 +488,10 @@ test("une session interrompue permet de se reconnecter sans perdre l’opératio
   await d
     .getByRole("button", { name: "Ajouter l’opération", exact: true })
     .click();
+  await expect(d.locator(".dialog-save-error")).toBeVisible();
+  await expect(d.getByLabel("Montant (€) *")).toHaveValue("75,30");
+  await d.getByRole("button", { name: "Fermer et voir les options de récupération", exact: true }).click();
+  await expect(d).not.toBeVisible();
   await expect(
     page.getByRole("button", { name: "Se reconnecter", exact: true }),
   ).toBeVisible();

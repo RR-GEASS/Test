@@ -2,7 +2,7 @@ import { uid, todayISO, money, moneyInput, shortDate, parseMoney, validDate, ban
 import { icon, esc } from "./ui.js";
 
 export function createBankCheckUI(ctx) {
-  const { getState, allowMutation, mountDialog, closeDialog, field, formHeader, formFooter, showErrors, persist, confirmDialog } = ctx;
+  const { getState, allowMutation, mountDialog, field, formHeader, formFooter, showErrors, saveDialog, confirmDialog } = ctx;
   const difference = (check) => {
     const calculated = bankBalanceAt(getState(), check.date);
     return calculated === null ? null : check.balanceCents - calculated;
@@ -29,26 +29,28 @@ export function createBankCheckUI(ctx) {
     }
     preview();
     d.querySelector("form").addEventListener("input",preview);
-    d.querySelector("form").addEventListener("submit", e => {
+    d.querySelector("form").addEventListener("submit", async e => {
       e.preventDefault();
       const result = validateBankCheck({...Object.fromEntries(new FormData(e.currentTarget)),id:check.id},getState());
       if (showErrors(d,result.errors)) return;
-      const next = structuredClone(getState());
-      next.bankChecks ||= [];
-      if (existing) next.bankChecks = next.bankChecks.map(c => c.id === id ? result.value : c);
-      else next.bankChecks.push(result.value);
-      ctx.setState(next);
-      closeDialog();
-      persist("Le contrôle bancaire a été enregistré.");
+      await saveDialog(d, "Le contrôle bancaire a été enregistré.", () => {
+        const next = structuredClone(getState());
+        next.bankChecks ||= [];
+        const index = next.bankChecks.findIndex(c => c.id === check.id);
+        if (index < 0) next.bankChecks.push(result.value);
+        else next.bankChecks[index] = result.value;
+        ctx.setState(next);
+      });
     });
   }
   function action(action,id) {
     if (action === "add-bank-check" || action === "edit-bank-check") { form(id); return true; }
     if (action === "delete-bank-check") {
-      if (allowMutation()) confirmDialog("Supprimer ce contrôle ?", "Le contrôle sera retiré de l’historique. Les opérations et règlements sont conservés.", "Supprimer le contrôle", () => {
-        getState().bankChecks = (getState().bankChecks || []).filter(c => c.id !== id);
-        persist("Le contrôle a été supprimé.");
-      });
+      if (allowMutation()) confirmDialog("Supprimer ce contrôle ?", "Le contrôle sera retiré de l’historique. Les opérations et règlements sont conservés.", "Supprimer le contrôle", d =>
+        saveDialog(d, "Le contrôle a été supprimé.", () => {
+          getState().bankChecks = (getState().bankChecks || []).filter(c => c.id !== id);
+        }),
+      );
       return true;
     }
     return false;

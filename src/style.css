@@ -1646,6 +1646,9 @@ dialog h2 {
 }
 #toast {
   position: fixed;
+  inset: auto;
+  margin: 0;
+  border: 0;
   left: calc(50% + 119px);
   bottom: 25px;
   display: flex;
@@ -1677,6 +1680,18 @@ dialog h2 {
   height: 15px;
   color: #c6d8c6;
 }
+#toast[data-kind="error"] {
+  background: #843d49;
+}
+#toast[data-kind="error"] > .icon {
+  color: #fff;
+}
+.dialog-save-error {
+  padding: 12px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+}
+.dialog-save-error p { margin: 0 0 8px; }
 [data-theme="dark"] {
   --bg: #101923;
   --surface: #172533;

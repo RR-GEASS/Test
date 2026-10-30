@@ -11,7 +11,7 @@ const kindNames = { supplier: "fournisseur", tenant: "locataire" };
 const collections = { supplier: "suppliers", tenant: "tenants" };
 
 export function createDirectoryUI(ctx) {
-  const { getState, setState, persist, mountDialog, closeDialog, formHeader,
+  const { getState, setState, saveDialog, mountDialog, closeDialog, formHeader,
     formFooter, field, selectField, showErrors, allowMutation, confirmDialog } = ctx;
   const filters = { suppliers: "", tenants: "", leases: "" };
   const includeArchived = { suppliers: false, tenants: false };
@@ -26,7 +26,7 @@ export function createDirectoryUI(ctx) {
 
   function bind(container) {
     container.querySelectorAll("[data-directory-action]").forEach((b) => {
-      b.addEventListener("click", () => action(b.dataset.directoryAction, b.dataset.id));
+      b.addEventListener("click", () => action(b.dataset.directoryAction, b.dataset.id, b.closest("dialog")));
     });
   }
   function toolbar(view, placeholder) {
@@ -76,16 +76,15 @@ export function createDirectoryUI(ctx) {
   function leaseCard(lease) {
     return `<article class="directory-card" data-testid="lease-card"><div class="directory-card-top"><span class="feature-icon blue">${icon("building")}</span><span class="status-pill ${leaseStatus(lease) === "En cours" ? "paid" : "pending"}">${leaseStatus(lease)}</span></div><h3>${esc(propertyName(lease.propertyId))}</h3><p>${esc(tenantName(lease.tenantId))}</p><dl class="directory-mini">${detailItem("Occupation", `${shortDate(lease.startDate)} → ${lease.endDate ? shortDate(lease.endDate) : "Sans date de fin"}`)}${detailItem("Loyer et provisions", money(leaseRentAt(lease).amountCents))}</dl><div class="directory-card-bottom"><span>Échéance le ${lease.paymentDay}</span>${button("view-lease", lease.id, "Ouvrir la location " + icon("arrow"))}</div></article>`;
   }
-  async function save(collection, value, message, callback) {
-    const next = structuredClone(getState());
-    next[collection] ||= [];
-    const index = next[collection].findIndex((r) => r.id === value.id);
-    if (index < 0) next[collection].push(value);
-    else next[collection][index] = value;
-    setState(next);
-    closeDialog();
-    await persist(message);
-    callback?.(value);
+  async function save(d, collection, value, message, callback) {
+    return saveDialog(d, message, () => {
+      const next = structuredClone(getState());
+      next[collection] ||= [];
+      const index = next[collection].findIndex((r) => r.id === value.id);
+      if (index < 0) next[collection].push(value);
+      else next[collection][index] = value;
+      setState(next);
+    }, () => callback?.(value));
   }
   function supplierForm(id, onSaved) {
     if (!allowMutation()) return;
@@ -96,7 +95,7 @@ export function createDirectoryUI(ctx) {
       e.preventDefault();
       const result = validateSupplier({ ...s, ...Object.fromEntries(new FormData(e.currentTarget)), archived: s.archived }, getState());
       if (showErrors(d, result.errors)) return;
-      await save("suppliers", result.value, "La fiche fournisseur a été enregistrée.", onSaved);
+      await save(d, "suppliers", result.value, "La fiche fournisseur a été enregistrée.", onSaved);
     });
   }
   function tenantForm(id, onSaved) {
@@ -108,7 +107,7 @@ export function createDirectoryUI(ctx) {
       e.preventDefault();
       const result = validateTenant({ ...t, ...Object.fromEntries(new FormData(e.currentTarget)), archived: t.archived }, getState());
       if (showErrors(d, result.errors)) return;
-      await save("tenants", result.value, "La fiche locataire a été enregistrée.", onSaved);
+      await save(d, "tenants", result.value, "La fiche locataire a été enregistrée.", onSaved);
     });
   }
   function leaseForm(id, tenantId = "", propertyId = "", onSaved) {
@@ -150,26 +149,25 @@ export function createDirectoryUI(ctx) {
       const result = validateLease(input, getState());
       if (result.value.rentCents <= 0) result.errors.rent="Le loyer hors charges doit être supérieur à zéro.";
       if (showErrors(d, result.errors)) return;
-      const next = structuredClone(getState());
-      next.leases ||= [];
-      const index = next.leases.findIndex((r) => r.id === l.id);
-      if (index < 0) next.leases.push(result.value);
-      else next.leases[index] = result.value;
-      if (result.value.endDate) {
-        for (const rule of next.recurrences || []) {
-          if (rule.leaseId !== l.id) continue;
-          if (rule.startDate > result.value.endDate) {
-            rule.active = false;
-          } else {
-            if (!rule.endDate || rule.endDate > result.value.endDate) rule.endDate = result.value.endDate;
-            if (result.value.endDate < todayISO()) rule.active = false;
+      await saveDialog(d, "La location et ses dates ont été enregistrées.", () => {
+        const next = structuredClone(getState());
+        next.leases ||= [];
+        const index = next.leases.findIndex((r) => r.id === l.id);
+        if (index < 0) next.leases.push(result.value);
+        else next.leases[index] = result.value;
+        if (result.value.endDate) {
+          for (const rule of next.recurrences || []) {
+            if (rule.leaseId !== l.id) continue;
+            if (rule.startDate > result.value.endDate) {
+              rule.active = false;
+            } else {
+              if (!rule.endDate || rule.endDate > result.value.endDate) rule.endDate = result.value.endDate;
+              if (result.value.endDate < todayISO()) rule.active = false;
+            }
           }
         }
-      }
-      setState(next);
-      closeDialog();
-      await persist("La location et ses dates ont été enregistrées.");
-      onSaved?.(result.value);
+        setState(next);
+      }, () => onSaved?.(result.value));
     });
   }
   function rentChangeForm(id) {
@@ -180,11 +178,14 @@ export function createDirectoryUI(ctx) {
     const d = mountDialog(`<dialog class="form-dialog" aria-labelledby="dialog-title"><form novalidate>${formHeader("Modifier le loyer", propertyName(lease.propertyId) + " · " + tenantName(lease.tenantId), "calendar")}${field("effectiveDate", "À partir du *", todayISO(), "date", "required")}${field("rent", "Nouveau loyer hors charges (€) *", moneyInput(amounts.rentCents), "text", 'inputmode="decimal" required')}${field("charges", "Nouvelles provisions sur charges (€)", moneyInput(amounts.chargesCents), "text", 'inputmode="decimal"')}<p class="form-note">Les prochaines échéances suivront ce montant à partir de la date choisie. Les échéances déjà préparées sans aucun règlement seront mises à jour ; les échéances réglées ou partiellement réglées resteront intactes. Vérifiez que la modification correspond à votre bail ou à un avenant.</p>${formFooter("Appliquer le changement")}</form></dialog>`);
     d.querySelector("form").addEventListener("submit", async e => {
       e.preventDefault();
-      const next = structuredClone(getState());
       try {
-        const result = applyLeaseRentChange(next, id, Object.fromEntries(new FormData(e.currentTarget)));
-        setState(next); closeDialog();
-        await persist(`Le loyer a été modifié : ${result.updated} échéance(s) sans règlement mise(s) à jour, ${result.skipped} échéance(s) déjà pointée(s) conservée(s).`);
+        const values = Object.fromEntries(new FormData(e.currentTarget));
+        let result;
+        await saveDialog(d, () => `Le loyer a été modifié : ${result.updated} échéance(s) sans règlement mise(s) à jour, ${result.skipped} échéance(s) déjà pointée(s) conservée(s).`, () => {
+          const next = structuredClone(getState());
+          result = applyLeaseRentChange(next, id, values);
+          setState(next);
+        });
       } catch(error) { showErrors(d, {effectiveDate:error.message}); }
     });
   }
@@ -231,18 +232,16 @@ export function createDirectoryUI(ctx) {
     const d = mountDialog(`<dialog class="form-dialog directory-dialog" aria-labelledby="dialog-title">${formHeader(propertyName(l.propertyId), tenantName(l.tenantId) + " · " + leaseStatus(l), "building")}<dl class="directory-details">${detailItem("Date d’entrée", shortDate(l.startDate))}${detailItem("Date de sortie", l.endDate ? shortDate(l.endDate) : "Non prévue")}${detailItem("Loyer hors charges actuel", money(leaseRentAt(l).rentCents))}${detailItem("Provisions actuelles", money(leaseRentAt(l).chargesCents))}${detailItem("Dépôt de garantie prévu", money(l.depositCents))}${detailItem("Jour d’échéance", String(l.paymentDay))}${detailItem("Notes", l.notes)}</dl><div class="directory-detail-actions">${button("edit-lease", id, icon("edit") + " Modifier / terminer")}${button("lease-rent-change", id, icon("calendar") + " Modifier le loyer")}${button("documents-lease", id, icon("folder") + " Bail et documents")}${ctx.getUser()?.role === "owner" && !(l.rentChanges || []).length && ![...rows("transactions"),...rows("recurrences")].some(row=>row.leaseId===id) ? button("delete-empty-lease", id, icon("trash") + " Supprimer cette location vide", "danger-text") : ""}${leaseStatus(l) !== "Terminée" ? button("lease-recurrence", id, icon("calendar") + " Préparer le loyer périodique") : ""}</div>${(l.rentChanges || []).length ? `<h3 class="directory-history-title">Changements de loyer</h3><ul class="payment-list">${l.rentChanges.map(change=>`<li><span>À partir du ${shortDate(change.effectiveDate)}</span><strong>${money(change.rentCents)} HC + ${money(change.chargesCents)} de provisions</strong></li>`).join("")}</ul>` : ""}<h3 class="directory-history-title">Opérations de cette location</h3>${operationHistory("lease", id)}<div class="dialog-footer"><button type="button" class="button secondary" data-close>Fermer</button></div></dialog>`);
     bind(d);
   }
-  function deleteEmptyLease(id) {
+  function deleteEmptyLease(id, sourceDialog) {
     if (!allowMutation() || ctx.getUser()?.role !== "owner") return;
     confirmDialog("Supprimer cette location vide ?", "Le serveur vérifiera qu’aucune opération, périodicité, changement de loyer ou pièce jointe n’est rattaché à cette location. Sinon, elle sera conservée.", "Supprimer la location vide", async () => {
-      try {
-        await api(`/leases/${encodeURIComponent(id)}`, undefined, "DELETE");
-        closeDialog();
-        await ctx.reloadSession();
-        ctx.toast("La location vide a été supprimée. Vous pouvez la recréer avec les bonnes informations.");
-      } catch (error) { ctx.toast(error.message, true); }
+      await api(`/leases/${encodeURIComponent(id)}`, undefined, "DELETE");
+      await ctx.reloadSession();
+      if (sourceDialog) closeDialog(sourceDialog);
+      ctx.toast("La location vide a été supprimée. Vous pouvez la recréer avec les bonnes informations.");
     });
   }
-  function archive(kind, id) {
+  function archive(kind, id, sourceDialog) {
     if (!allowMutation()) return;
     const collection = collections[kind], person = find(collection, id);
     if (!person) return;
@@ -250,15 +249,15 @@ export function createDirectoryUI(ctx) {
       ctx.toast("Terminez les locations en cours ou à venir avant de désactiver ce locataire.", true);
       return;
     }
-    confirmDialog(person.archived ? "Réactiver cette fiche ?" : "Désactiver cette fiche ?", "Les locations, opérations et documents déjà rattachés restent conservés.", person.archived ? "Réactiver" : "Désactiver", () => {
-      const next = structuredClone(getState());
-      next[collection].find((row) => row.id === id).archived = !person.archived;
-      setState(next);
-      closeDialog();
-      persist("Le statut de la fiche a été mis à jour.");
-    });
+    confirmDialog(person.archived ? "Réactiver cette fiche ?" : "Désactiver cette fiche ?", "Les locations, opérations et documents déjà rattachés restent conservés.", person.archived ? "Réactiver" : "Désactiver", d =>
+      saveDialog(d, "Le statut de la fiche a été mis à jour.", () => {
+        const next = structuredClone(getState());
+        next[collection].find((row) => row.id === id).archived = !person.archived;
+        setState(next);
+      }, () => { if (sourceDialog) closeDialog(sourceDialog); }),
+    );
   }
-  function action(name, id) {
+  function action(name, id, sourceDialog) {
     const handlers = {
       "view-property": () => { closeDialog(); ctx.viewProperty(id); },
       "edit-operation": () => { closeDialog(); ctx.editTransaction(id); },
@@ -269,8 +268,8 @@ export function createDirectoryUI(ctx) {
       "view-supplier": () => personDetails("supplier", id), "view-tenant": () => personDetails("tenant", id),
       "view-lease": () => leaseDetails(id),
       "lease-rent-change": () => { closeDialog(); rentChangeForm(id); },
-      "delete-empty-lease": () => deleteEmptyLease(id),
-      "archive-supplier": () => archive("supplier", id), "archive-tenant": () => archive("tenant", id),
+      "delete-empty-lease": () => deleteEmptyLease(id, sourceDialog),
+      "archive-supplier": () => archive("supplier", id, sourceDialog), "archive-tenant": () => archive("tenant", id, sourceDialog),
       "documents-supplier": () => ctx.openEntityDocuments("supplier", id),
       "documents-tenant": () => ctx.openEntityDocuments("tenant", id),
       "documents-lease": () => ctx.openEntityDocuments("lease", id),

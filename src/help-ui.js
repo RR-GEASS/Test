@@ -107,6 +107,13 @@ const pages = {
     tips: ["Annuler un mouvement réglé conserve sa trace ; créez ensuite la bonne opération si nécessaire.", "L’historique explique les changements, mais ne remplace pas la sauvegarde des documents."],
     links: [["transactions", "Ouvrir les opérations"], ["backups", "Ouvrir les sauvegardes"]],
   },
+  "documents-guide": {
+    title: "Choisir les justificatifs utiles",
+    intro: "Retrouvez les pièces adaptées à chaque type de mouvement de votre SCI.",
+    steps: ["Recherchez la catégorie ou un mot comme banque, travaux ou loyer.", "Consultez les pièces à conserver et leur emplacement dans Cap SCI.", "Avant l’export, ajoutez les documents de référence qui ne sont pas inclus automatiquement."],
+    tips: ["Une opération sans facture doit rester expliquée par des preuves adaptées.", "La case Justificatif non nécessaire signifie qu’aucune pièce distincte n’est attendue sur cette opération ; les preuves restent à conserver."],
+    links: [["transactions", "Vérifier les opérations"], ["exports", "Préparer le dossier comptable"]],
+  },
   storage: {
     title: "Gérer l’espace des documents",
     intro: "L’espace affiché couvre les justificatifs des opérations et les documents des fiches.",
@@ -126,11 +133,12 @@ const start = [
 export function createHelpUI(ctx) {
   function open(view = "dashboard") {
     const page = pages[view] || pages.dashboard;
-    const d = ctx.mountDialog(`<dialog class="form-dialog help-dialog" aria-labelledby="dialog-title">${ctx.formHeader("Aide · " + page.title, page.intro, "receipt")}<ol class="help-steps">${page.steps.map(step => `<li>${esc(step)}</li>`).join("")}</ol><div class="help-practices"><h3>À retenir sur cette page</h3><ul>${page.tips.map(tip => `<li>${esc(tip)}</li>`).join("")}</ul></div><div class="help-shortcuts">${page.links.map(([target, label]) => `<button type="button" class="button secondary compact" data-help-view="${esc(target)}">${icon("arrow")}${esc(label)}</button>`).join("")}</div><details class="help-start" ${view === "dashboard" ? "open" : ""}><summary>Bien démarrer avec votre SCI</summary><p class="form-note">Avant les premières opérations, ouvrez les paramètres de la SCI et renseignez le solde bancaire initial à la bonne date, avant les mouvements de cette journée.</p><div class="help-start-grid">${start.map(([target, label, description]) => `<button type="button" data-help-view="${esc(target)}"><strong>${esc(label)}</strong><span>${esc(description)}</span></button>`).join("")}</div></details><details class="help-start"><summary>Les bonnes habitudes à garder</summary><ul class="help-steps"><li>Pointez régulièrement le relevé et comparez le solde à la même date.</li><li>Joignez les factures à leurs opérations et le bail à sa location.</li><li>Vérifiez les champs préremplis et gardez la vraie date de règlement.</li><li>Conservez une copie du dossier envoyé au comptable et des sauvegardes hors du serveur.</li><li>Les dépenses payées personnellement, trop-perçus et régularisations de charges demandent un suivi particulier à vérifier avec votre comptable.</li></ul></details><div class="dialog-footer"><button type="button" class="button primary" data-close>J’ai compris</button></div></dialog>`);
+    const d = ctx.mountDialog(`<dialog class="form-dialog help-dialog" aria-labelledby="dialog-title">${ctx.formHeader("Aide · " + page.title, page.intro, "receipt")}<ol class="help-steps">${page.steps.map(step => `<li>${esc(step)}</li>`).join("")}</ol><div class="help-practices"><h3>À retenir sur cette page</h3><ul>${page.tips.map(tip => `<li>${esc(tip)}</li>`).join("")}</ul></div><div class="help-shortcuts">${page.links.map(([target, label]) => `<button type="button" class="button secondary compact" data-help-view="${esc(target)}">${icon("arrow")}${esc(label)}</button>`).join("")}</div><button type="button" class="button secondary document-guide-link" data-help-guide>${icon("folder")}Guide des justificatifs</button><details class="help-start" ${view === "dashboard" ? "open" : ""}><summary>Bien démarrer avec votre SCI</summary><p class="form-note">Avant les premières opérations, ouvrez les paramètres de la SCI et renseignez le solde bancaire initial à la bonne date, avant les mouvements de cette journée.</p><div class="help-start-grid">${start.map(([target, label, description]) => `<button type="button" data-help-view="${esc(target)}"><strong>${esc(label)}</strong><span>${esc(description)}</span></button>`).join("")}</div></details><details class="help-start"><summary>Les bonnes habitudes à garder</summary><ul class="help-steps"><li>Pointez régulièrement le relevé et comparez le solde à la même date.</li><li>Joignez les factures à leurs opérations et le bail à sa location.</li><li>Vérifiez les champs préremplis et gardez la vraie date de règlement.</li><li>Conservez une copie du dossier envoyé au comptable et des sauvegardes hors du serveur.</li><li>Les dépenses payées personnellement, trop-perçus et régularisations de charges demandent un suivi particulier à vérifier avec votre comptable.</li></ul></details><div class="dialog-footer"><button type="button" class="button primary" data-close>J’ai compris</button></div></dialog>`);
     d.querySelectorAll("[data-help-view]").forEach(button => button.addEventListener("click", () => {
       ctx.closeDialog();
       ctx.navigate(button.dataset.helpView);
     }));
+    d.querySelector("[data-help-guide]").addEventListener("click", ctx.openDocumentsGuide);
     return d;
   }
   return { open };

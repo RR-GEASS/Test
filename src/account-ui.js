@@ -97,8 +97,8 @@ export function createAccountUI(ctx) {
       target.innerHTML=`<ul class="account-people">${(data.orphans || []).map(document=>`<li><span><strong>${esc(document.name)}</strong><small>${bytes(document.sizeBytes ?? document.size)} · ${esc(dateTime(document.createdAt))}</small></span><button type="button" class="text-link danger-text" data-orphan-kind="${esc(document.kind)}" data-orphan-id="${esc(document.id)}">Supprimer définitivement</button></li>`).join("") || '<li>Aucun document sans rattachement.</li>'}</ul>`;
       target.querySelectorAll("[data-orphan-id]").forEach(button=>button.addEventListener("click",()=>{
         ctx.confirmDialog("Supprimer définitivement ce document ?","Vérifiez que vous avez conservé une copie utile. Ce fichier ne pourra plus être récupéré depuis l’application.","Supprimer le fichier",async()=>{
-          try {await api(`/storage/orphans/${encodeURIComponent(button.dataset.orphanKind)}/${encodeURIComponent(button.dataset.orphanId)}`,undefined,"DELETE");ctx.toast("Le document a été supprimé.");render("storage",content);}
-          catch(e){ctx.toast(e.message,true);}
+          await api(`/storage/orphans/${encodeURIComponent(button.dataset.orphanKind)}/${encodeURIComponent(button.dataset.orphanId)}`,undefined,"DELETE");
+          ctx.toast("Le document a été supprimé.");render("storage",content);
         });
       }));
     } catch(e) {if(content.isConnected)content.querySelector("#orphan-documents").textContent=e.message;}
@@ -110,7 +110,7 @@ export function createAccountUI(ctx) {
       e.preventDefault();const submit=d.querySelector('[type="submit"]');submit.disabled=true;
       try {
         const result=await api("/access/invitations",{email:d.querySelector('[name="email"]').value});
-        ctx.closeDialog();if(activeContent?.isConnected) render("access",activeContent);showInvitation(result);
+        ctx.closeDialog(d);if(activeContent?.isConnected) render("access",activeContent);showInvitation(result);
       } catch(error) {d.querySelector(".finance-error").textContent=error.message;} finally {submit.disabled=false;}
     });
   }
@@ -129,7 +129,7 @@ export function createAccountUI(ctx) {
       e.preventDefault();const values=Object.fromEntries(new FormData(e.currentTarget));
       if(ctx.showErrors(d,{...(values.newPassword!==values.confirmation?{confirmation:"Les mots de passe ne correspondent pas."}:{})}))return;
       const submit=d.querySelector('[type="submit"]');submit.disabled=true;
-      try {await api("/account/password",{currentPassword:values.currentPassword,newPassword:values.newPassword});ctx.closeDialog();ctx.toast("Votre mot de passe a été modifié.");}
+      try {await api("/account/password",{currentPassword:values.currentPassword,newPassword:values.newPassword});ctx.closeDialog(d);ctx.toast("Votre mot de passe a été modifié.");}
       catch(error){d.querySelector(".finance-error").textContent=error.message;}
       finally{submit.disabled=false;}
     });
@@ -141,8 +141,9 @@ export function createAccountUI(ctx) {
       if(!ctx.allowMutation())return true;
       const member=name==="remove-member";
       ctx.confirmDialog(member?"Retirer cet accès ?":"Annuler cette invitation ?",member?"Cette personne ne pourra plus consulter cette SCI. Les données et l’historique restent conservés.":"Le lien d’invitation ne permettra plus de rejoindre la SCI.",member?"Retirer l’accès":"Annuler l’invitation",async()=>{
-        try {await api(`/access/${member?"members":"invitations"}/${encodeURIComponent(id)}`,undefined,"DELETE");if(activeContent?.isConnected)render("access",activeContent);ctx.toast(member?"L’accès a été retiré.":"L’invitation a été annulée.");}
-        catch(e){ctx.toast(e.message,true);}
+        await api(`/access/${member?"members":"invitations"}/${encodeURIComponent(id)}`,undefined,"DELETE");
+        if(activeContent?.isConnected)render("access",activeContent);
+        ctx.toast(member?"L’accès a été retiré.":"L’invitation a été annulée.");
       });return true;
     }
     return false;

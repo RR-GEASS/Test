@@ -45,6 +45,7 @@ export function createFinanceUI(ctx) {
     getState,
     getUser,
     persist,
+    saveDialog,
     mountDialog,
     closeDialog,
     formHeader,
@@ -346,7 +347,7 @@ export function createFinanceUI(ctx) {
     });
     d.querySelector("form").addEventListener("input", preview);
     amounts();
-    d.querySelector("form").addEventListener("submit", (e) => {
+    d.querySelector("form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const result = validateRecurrence(
         {
@@ -363,18 +364,16 @@ export function createFinanceUI(ctx) {
       const duplicateRent = validateRentRecurrence(result.value, getState());
       if (duplicateRent) result.errors.leaseId = duplicateRent;
       if (showErrors(d, result.errors)) return;
-      const next = structuredClone(getState());
-      next.recurrences ||= [];
-      if (existing)
-        next.recurrences = next.recurrences.map((row) =>
-          row.id === id ? result.value : row,
-        );
-      else next.recurrences.push(result.value);
       try {
-        generateRecurringTransactions(next, monthEnd(todayISO()));
-        ctx.setState(next);
-        closeDialog();
-        persist("La périodicité et ses échéances ont été enregistrées.");
+        await saveDialog(d, "La périodicité et ses échéances ont été enregistrées.", () => {
+          const next = structuredClone(getState());
+          next.recurrences ||= [];
+          const index = next.recurrences.findIndex(row => row.id === result.value.id);
+          if (index < 0) next.recurrences.push(result.value);
+          else next.recurrences[index] = result.value;
+          generateRecurringTransactions(next, monthEnd(todayISO()));
+          ctx.setState(next);
+        });
       } catch (error) {
         errorIn(d, error);
       }
@@ -503,14 +502,9 @@ export function createFinanceUI(ctx) {
       "Valider les règlements ?",
       `${ids.length} opération(s), soit ${money(total)}, à la date du ${shortDate(date)}.`,
       "Valider les règlements",
-      () => {
-        try {
-          recordPaymentsBatch(getState(), ids, date);
-          persist("Les règlements sélectionnés ont été enregistrés.");
-        } catch (error) {
-          toast(error.message, true);
-        }
-      },
+      d => saveDialog(d, "Les règlements sélectionnés ont été enregistrés.", () => {
+        recordPaymentsBatch(getState(), ids, date);
+      }),
     );
   }
   function loanForm(id) {
@@ -522,17 +516,21 @@ export function createFinanceUI(ctx) {
     );
     updateLoanTotal(d);
     d.querySelector("form").addEventListener("input", () => updateLoanTotal(d));
-    d.querySelector("form").addEventListener("submit", (e) => {
+    d.querySelector("form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const input = { ...t, ...Object.fromEntries(new FormData(e.currentTarget)) };
       delete input.amount;
       const result = validateTransaction(input, getState());
       if (showErrors(d, result.errors)) return;
-      const next = structuredClone(getState());
-      next.transactions = next.transactions.map((row) => row.id === id ? result.value : row);
-      ctx.setState(next);
-      closeDialog();
-      persist("La répartition de cette échéance de prêt a été enregistrée.");
+      try {
+        await saveDialog(d, "La répartition de cette échéance de prêt a été enregistrée.", () => {
+          const next = structuredClone(getState());
+          next.transactions = next.transactions.map((row) => row.id === id ? result.value : row);
+          ctx.setState(next);
+        });
+      } catch (error) {
+        errorIn(d, error);
+      }
     });
   }
   function paymentForm(id) {
@@ -561,16 +559,13 @@ export function createFinanceUI(ctx) {
     }
     allocation();
     d.querySelector("[name=amount]").addEventListener("input", allocation);
-    d.querySelector("form").addEventListener("submit", (e) => {
+    d.querySelector("form").addEventListener("submit", async (e) => {
       e.preventDefault();
+      const values = Object.fromEntries(new FormData(e.currentTarget));
       try {
-        recordPayment(
-          getState(),
-          id,
-          Object.fromEntries(new FormData(e.currentTarget)),
-        );
-        closeDialog();
-        persist("Le règlement a été enregistré.");
+        await saveDialog(d, "Le règlement a été enregistré.", () => {
+          recordPayment(getState(), id, values);
+        });
       } catch (error) {
         errorIn(d, error);
       }
@@ -583,9 +578,11 @@ export function createFinanceUI(ctx) {
     const d = mountDialog(
       `<dialog class="form-dialog" aria-labelledby="dialog-title">${formHeader("Règlements", transactionLabel(t, getState()), "receipt")}<p class="form-note">${money(paidCents(t))} réglés sur ${money(t.amountCents)}. Chaque règlement affecte la trésorerie à sa propre date.</p><ul class="payment-list">${payments.map((p) => `<li><span>${shortDate(p.date)}<strong>${money(p.amountCents)}</strong>${t.category === "rent" ? `<small>Loyer ${money(p.rentCents ?? p.amountCents)} · Provisions ${money(p.chargesCents ?? 0)}</small>` : ""}</span><button class="text-link danger-text" data-cancel-payment="${esc(p.id)}">Annuler ce règlement</button></li>`).join("") || "<li>Aucun règlement enregistré.</li>"}</ul><div class="dialog-footer"><button class="button secondary" data-close>Fermer</button>${remainingCents(t) > 0 ? '<button class="button primary" id="add-payment">Ajouter un règlement</button>' : ""}</div></dialog>`,
     );
-    d.querySelector("#add-payment")?.addEventListener("click", () =>
-      paymentForm(id),
-    );
+    d.querySelector("#add-payment")?.addEventListener("click", () => {
+      if (!allowMutation()) return;
+      closeDialog(d);
+      paymentForm(id);
+    });
     d.querySelectorAll("[data-cancel-payment]").forEach((b) =>
       b.addEventListener("click", () => {
         if (!allowMutation()) return;
@@ -594,11 +591,11 @@ export function createFinanceUI(ctx) {
           "Annuler ce règlement ?",
           "Le montant sera retiré de la trésorerie à sa date initiale. L’échéance restera dans le suivi.",
           "Annuler le règlement",
-          () => {
-            t.payments = getPayments(t).filter((p) => p.id !== paymentId);
-            t.status = "pending";
-            persist("Le règlement a été annulé.");
-          },
+          confirmation => saveDialog(confirmation, "Le règlement a été annulé.", () => {
+            const transaction = getState().transactions.find(row => row.id === id);
+            transaction.payments = getPayments(transaction).filter((p) => p.id !== paymentId);
+            transaction.status = "pending";
+          }, () => closeDialog(d)),
         );
       }),
     );
@@ -720,12 +717,11 @@ export function createFinanceUI(ctx) {
         "Supprimer la périodicité ?",
         "Les opérations déjà créées et leurs règlements seront conservés. Aucune nouvelle échéance ne sera générée.",
         "Supprimer la périodicité",
-        () => {
+        d => saveDialog(d, "La périodicité a été supprimée.", () => {
           getState().recurrences = getState().recurrences.filter(
             (r) => r.id !== id,
           );
-          persist("La périodicité a été supprimée.");
-        },
+        }),
       );
       return true;
     }
